@@ -227,7 +227,7 @@ void set_file_mode(const fs::path& path, uint32_t mode) {
 uint64_t get_mtime_ms(const fs::path& path) {
     try {
         auto ftime = fs::last_write_time(path);
-        auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(ftime.time_since_epoch());
+        auto dur = std::chrono::duration_cast<std::chrono::nanoseconds>(ftime.time_since_epoch());
         return static_cast<uint64_t>(dur.count());
     } catch (...) {
         return 0;

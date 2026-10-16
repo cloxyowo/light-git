@@ -121,7 +121,7 @@ TEST(Integration_RestoreAndReset) {
     ObjectId c1 = repo.create_commit("First commit");
 
     // Modify file in working tree
-    sb.write_file("doc.txt", "Modified content");
+    sb.write_file("doc.txt", "Modified content in working tree");
     RepoStatus s1 = repo.compute_status();
     ASSERT_EQ(s1.unstaged_modified.size(), 1);
 
@@ -130,7 +130,7 @@ TEST(Integration_RestoreAndReset) {
     ASSERT_EQ(sb.read_file("doc.txt"), "Original content");
 
     // Stage changes and unstage via restore --staged
-    sb.write_file("doc.txt", "New staged change");
+    sb.write_file("doc.txt", "New staged change with updated content");
     repo.stage_all();
     RepoStatus s2 = repo.compute_status();
     ASSERT_EQ(s2.staged_modified.size(), 1);
