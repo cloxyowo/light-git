@@ -10,6 +10,7 @@
 #include <io.h>
 #else
 #include <unistd.h>
+#include <cstdio>
 #endif
 
 namespace light_git {
