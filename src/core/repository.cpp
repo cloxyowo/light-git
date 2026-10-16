@@ -10,6 +10,7 @@
 #include <queue>
 #include <map>
 #include <algorithm>
+#include <cstring>
 
 namespace light_git {
 
@@ -1682,13 +1683,16 @@ void Repository::export_to_git(const std::filesystem::path& target_git_dir) {
 
     if (std::system(check_cmd.c_str()) == 0) {
         std::string init_cmd = "git -C \"" + target_git_dir.string() + "\" init";
-        std::system(init_cmd.c_str());
+        int r1 = std::system(init_cmd.c_str());
+        (void)r1;
 
         std::string import_cmd = "git -C \"" + target_git_dir.string() + "\" fast-import < \"" + fi_path.string() + "\"";
-        std::system(import_cmd.c_str());
+        int r2 = std::system(import_cmd.c_str());
+        (void)r2;
 
         std::string checkout_cmd = "git -C \"" + target_git_dir.string() + "\" checkout -f main";
-        std::system(checkout_cmd.c_str());
+        int r3 = std::system(checkout_cmd.c_str());
+        (void)r3;
     }
 }
 
