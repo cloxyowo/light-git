@@ -10,7 +10,7 @@ namespace light_git {
 
 class References {
 public:
-    explicit References(std::filesystem::path git_dir);
+    explicit References(std::filesystem::path git_dir, std::filesystem::path head_file = {});
 
     // HEAD management
     bool is_head_detached() const;
@@ -32,14 +32,23 @@ public:
     bool delete_tag(const std::string& tag_name);
     std::vector<std::string> list_tags() const;
 
+    // Remote tracking operations
+    std::optional<ObjectId> get_remote_branch_commit(const std::string& remote_name, const std::string& branch_name) const;
+    void set_remote_branch_commit(const std::string& remote_name, const std::string& branch_name, const ObjectId& commit_id);
+    bool delete_remote_branch(const std::string& remote_name, const std::string& branch_name);
+    std::vector<std::string> list_remote_branches(const std::string& remote_name) const;
+    std::vector<std::pair<std::string, std::string>> list_all_remote_branches() const;
+
     // All refs for gc & fsck
     std::vector<std::pair<std::string, ObjectId>> list_all_references() const;
 
 private:
     std::filesystem::path git_dir_;
-    std::filesystem::path head_file() const { return git_dir_ / "HEAD"; }
+    std::filesystem::path head_file_;
+    std::filesystem::path head_file() const { return head_file_.empty() ? (git_dir_ / "HEAD") : head_file_; }
     std::filesystem::path heads_dir() const { return git_dir_ / "refs" / "heads"; }
     std::filesystem::path tags_dir() const { return git_dir_ / "refs" / "tags"; }
+    std::filesystem::path remotes_dir() const { return git_dir_ / "refs" / "remotes"; }
 };
 
 } // namespace light_git

@@ -340,18 +340,107 @@ lgit export-git --output history.fi       # Exports raw Git fast-import stream f
 
 ---
 
+### `lgit remote`
+
+Manage the set of tracked remote repositories.
+
+**Usage:**
+```bash
+lgit remote                               # List configured remotes
+lgit remote -v                            # List remotes with URLs
+lgit remote add <name> <url>              # Add new remote
+lgit remote remove <name>                 # Remove remote and tracking refs
+lgit remote get-url <name>                # Display URL for remote
+lgit remote set-url <name> <url>          # Update URL for remote
+```
+
+---
+
+### `lgit fetch`
+
+Download objects and references from a remote repository into local remote-tracking branches (`refs/remotes/<remote>/<branch>`).
+
+**Usage:**
+```bash
+lgit fetch                                # Fetch from default remote (origin)
+lgit fetch <remote>                       # Fetch from specified remote
+lgit fetch <remote> <branch>              # Fetch specific branch from remote
+```
+
+---
+
+### `lgit push`
+
+Update remote branch references along with associated objects. Validates that the update is a fast-forward unless `--force` is specified.
+
+**Usage:**
+```bash
+lgit push                                 # Push current branch to origin
+lgit push <remote> <branch>               # Push specific branch to remote
+lgit push <remote> <branch> --force       # Force push bypassing fast-forward check
+```
+
+---
+
+### `lgit pull`
+
+Fetch from a remote repository and integrate (3-way merge) the remote tracking branch into the current branch.
+
+**Usage:**
+```bash
+lgit pull                                 # Pull current branch from origin
+lgit pull <remote> <branch>               # Pull specific branch from remote
+```
+
+---
+
+### `lgit clone`
+
+Clone a repository from a local directory or portable `.lgitpack` bundle file into a new directory.
+
+**Usage:**
+```bash
+lgit clone <source>                       # Clone into directory named after source
+lgit clone <source> <directory>           # Clone into target directory
+lgit clone <source> <directory> -b <branch> # Clone and checkout specific branch
+```
+
+---
+
+### `lgit bundle`
+
+Create, verify, and inspect portable zero-dependency binary archive bundles (`.lgitpack`) containing objects and reference pointers.
+
+**Usage:**
+```bash
+lgit bundle create <file.lgitpack>        # Package all branches and tags into bundle
+lgit bundle verify <file.lgitpack>        # Verify checksum and structural integrity
+lgit bundle list-heads <file.lgitpack>    # List references and tips in bundle
+lgit bundle unbundle <file.lgitpack>      # Import objects and references into current repo
+```
+
+---
+
+### `lgit worktree`
+
+Manage multiple working trees attached to the same repository database with isolated `HEAD` and staging index.
+
+**Usage:**
+```bash
+lgit worktree list                        # List all active working trees
+lgit worktree add <path> [<branch>]       # Create new linked working tree
+lgit worktree remove <path> [--force]     # Remove linked working tree
+lgit worktree prune                       # Remove stale metadata for deleted paths
+```
+
+---
+
 ## Planned / Roadmap Commands
 
 The following commands are registered on the light-git future roadmap:
 
-- `lgit clone`: Clone remote or local repository into a new directory.
-- `lgit fetch`: Download remote objects and references.
-- `lgit pull`: Fetch and integrate remote history.
-- `lgit push`: Update remote references with local objects.
-- `lgit remote`: Manage tracked remote repositories.
 - `lgit rebase`: Reapply commits on top of another base tip (`-i` interactive rebase).
-- `lgit worktree`: Manage multiple working trees connected to one repository.
 - `lgit ui`: Embedded local web dashboard and visual commit graph viewer.
 - `lgit sign`: Cryptographic commit and tag signing via Ed25519.
-- `lgit bundle`: Package repository objects into portable `.lgitpack` archives.
 - `lgit daemon`: Peer-to-peer and LAN repository discovery and sync daemon.
+

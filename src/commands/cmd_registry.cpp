@@ -1,5 +1,6 @@
 #include "commands.hpp"
 #include "light_git/terminal.hpp"
+#include "light_git/types.hpp"
 #include <iostream>
 
 namespace light_git {
@@ -7,7 +8,7 @@ namespace commands {
 
 int cmd_version(const CommandContext& ctx) {
     (void)ctx;
-    term::Terminal::print_banner("0.2.0");
+    term::Terminal::print_banner(std::string(LIGHT_GIT_VERSION));
     std::cout << "built with C++17 for high-performance minimal footprint\n";
 #if defined(_WIN32)
     std::cout << "platform: Windows (MSVC)\n";
@@ -216,18 +217,67 @@ void register_all_commands(CliDispatcher& d) {
         true
     });
 
+    d.register_command({
+        "remote",
+        "Manage set of tracked repositories",
+        "lgit remote [add <name> <url> | remove <name> | get-url <name> | set-url <name> <url> | -v]",
+        cmd_remote,
+        true
+    });
+
+    d.register_command({
+        "fetch",
+        "Download objects and refs from another repository",
+        "lgit fetch [<remote>] [<branch>]",
+        cmd_fetch,
+        true
+    });
+
+    d.register_command({
+        "push",
+        "Update remote refs along with associated objects",
+        "lgit push [<remote>] [<branch>] [--force]",
+        cmd_push,
+        true
+    });
+
+    d.register_command({
+        "pull",
+        "Fetch from and integrate with another repository",
+        "lgit pull [<remote>] [<branch>]",
+        cmd_pull,
+        true
+    });
+
+    d.register_command({
+        "clone",
+        "Clone a repository or bundle into a new directory",
+        "lgit clone <source> [<directory>] [-b <branch>]",
+        cmd_clone,
+        true
+    });
+
+    d.register_command({
+        "bundle",
+        "Package repository objects into portable .lgitpack archives",
+        "lgit bundle <create|verify|unbundle|list-heads> <file.lgitpack> [<rev>...]",
+        cmd_bundle,
+        true
+    });
+
+    d.register_command({
+        "worktree",
+        "Manage multiple working trees attached to same repository",
+        "lgit worktree <list | add <path> [<branch>] | remove <path> [--force] | prune>",
+        cmd_worktree,
+        true
+    });
+
     // Next-generation roadmap commands
     const std::vector<std::pair<std::string, std::string>> future_cmds = {
-        {"clone", "Clone a repository into a new directory"},
-        {"fetch", "Download objects and refs from another repository"},
-        {"pull", "Fetch from and integrate with another repository"},
-        {"push", "Update remote refs along with associated objects"},
-        {"remote", "Manage set of tracked repositories"},
         {"rebase", "Reapply commits on top of another base tip"},
-        {"worktree", "Manage multiple working trees attached to same repository"},
         {"ui", "Launch embedded web dashboard and visual commit graph viewer"},
         {"sign", "Sign commits and tags with cryptographic Ed25519 keys"},
-        {"bundle", "Package repository objects into portable .lgitpack archives"},
         {"daemon", "Peer-to-peer and LAN repository discovery daemon"}
     };
 

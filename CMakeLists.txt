@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(light-git VERSION 0.2.0 LANGUAGES CXX)
+project(light-git VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     add_compile_options(/W4 /permissive- /Zc:__cplusplus)
     # Release optimization for minimal footprint and maximum speed
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /GL /Gy")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /GL /Gy /Gw")
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG /OPT:REF /OPT:ICF")
     set(CMAKE_STATIC_LINKER_FLAGS_RELEASE "${CMAKE_STATIC_LINKER_FLAGS_RELEASE} /LTCG")
 else()
@@ -63,6 +63,13 @@ set(LIB_SOURCES
     src/commands/cmd_merge.cpp
     src/commands/cmd_cherry_pick.cpp
     src/commands/cmd_export_git.cpp
+    src/commands/cmd_remote.cpp
+    src/commands/cmd_fetch.cpp
+    src/commands/cmd_push.cpp
+    src/commands/cmd_pull.cpp
+    src/commands/cmd_clone.cpp
+    src/commands/cmd_bundle.cpp
+    src/commands/cmd_worktree.cpp
     src/commands/cmd_registry.cpp
 )
 

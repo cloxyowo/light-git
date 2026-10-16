@@ -15,8 +15,24 @@ namespace light_git {
 
 Repository::Repository(std::filesystem::path work_dir, std::filesystem::path git_dir, bool bare)
     : work_dir_(std::move(work_dir)), git_dir_(std::move(git_dir)), is_bare_(bare) {
-    objects_ = std::make_unique<ObjectStore>(git_dir_ / "objects");
-    refs_ = std::make_unique<References>(git_dir_);
+    std::filesystem::path common_dir = git_dir_;
+    std::filesystem::path cdir_file = git_dir_ / "commondir";
+    std::filesystem::path head_file = git_dir_ / "HEAD";
+
+    if (std::filesystem::exists(cdir_file)) {
+        std::string cdir_str = fs_util::read_file_string(cdir_file);
+        while (!cdir_str.empty() && (cdir_str.front() == ' ' || cdir_str.front() == '\t')) cdir_str.erase(0, 1);
+        while (!cdir_str.empty() && (cdir_str.back() == '\r' || cdir_str.back() == '\n' || cdir_str.back() == ' ')) cdir_str.pop_back();
+        std::filesystem::path p(cdir_str);
+        if (p.is_relative()) {
+            common_dir = std::filesystem::weakly_canonical(git_dir_ / p);
+        } else {
+            common_dir = p;
+        }
+    }
+
+    objects_ = std::make_unique<ObjectStore>(common_dir / "objects");
+    refs_ = std::make_unique<References>(common_dir, head_file);
     index_ = std::make_unique<Index>();
     config_ = std::make_unique<RepoConfig>();
 }
@@ -80,12 +96,43 @@ Repository Repository::open(const std::filesystem::path& start_path) {
     }
 
     std::filesystem::path root = *root_opt;
-    bool bare = !std::filesystem::exists(root / ".light-git");
+    std::filesystem::path lgit_entry = root / ".light-git";
+    bool bare = !std::filesystem::exists(lgit_entry);
     std::filesystem::path work_dir = root;
-    std::filesystem::path git_dir = bare ? root : (root / ".light-git");
+    std::filesystem::path git_dir = bare ? root : lgit_entry;
+
+    if (!bare && std::filesystem::is_regular_file(lgit_entry)) {
+        // Linked worktree file: "gitdir: <path>"
+        std::string content = fs_util::read_file_string(lgit_entry);
+        static constexpr std::string_view prefix = "gitdir:";
+        size_t p = content.find(prefix);
+        if (p != std::string::npos) {
+            std::string path_str = content.substr(p + prefix.size());
+            while (!path_str.empty() && (path_str.front() == ' ' || path_str.front() == '\t')) path_str.erase(0, 1);
+            while (!path_str.empty() && (path_str.back() == '\r' || path_str.back() == '\n' || path_str.back() == ' ')) path_str.pop_back();
+            std::filesystem::path gpath(path_str);
+            if (gpath.is_relative()) {
+                git_dir = std::filesystem::weakly_canonical(root / gpath);
+            } else {
+                git_dir = gpath;
+            }
+        }
+    }
 
     Repository repo(work_dir, git_dir, bare);
-    repo.config_->load(git_dir / "config");
+    std::filesystem::path cfg_dir = git_dir;
+    if (std::filesystem::exists(git_dir / "commondir")) {
+        std::string cdir_str = fs_util::read_file_string(git_dir / "commondir");
+        while (!cdir_str.empty() && (cdir_str.front() == ' ' || cdir_str.front() == '\t')) cdir_str.erase(0, 1);
+        while (!cdir_str.empty() && (cdir_str.back() == '\r' || cdir_str.back() == '\n' || cdir_str.back() == ' ')) cdir_str.pop_back();
+        std::filesystem::path cp(cdir_str);
+        if (cp.is_relative()) {
+            cfg_dir = std::filesystem::weakly_canonical(git_dir / cp);
+        } else {
+            cfg_dir = cp;
+        }
+    }
+    repo.config_->load(cfg_dir / "config");
     repo.index_->load_from_file(git_dir / "index");
     repo.load_ignores();
 
@@ -1024,6 +1071,20 @@ std::optional<ObjectId> Repository::resolve_revision(const std::string& rev) con
     if (auto tag_id = refs_->get_tag(rev)) {
         return tag_id;
     }
+
+    // Check remote tracking branch: "origin/main" or "refs/remotes/origin/main"
+    std::string_view rview = rev;
+    if (rview.rfind("refs/remotes/", 0) == 0) {
+        rview.remove_prefix(13);
+    }
+    size_t slash = rview.find('/');
+    if (slash != std::string_view::npos) {
+        std::string remote_part(rview.substr(0, slash));
+        std::string branch_part(rview.substr(slash + 1));
+        if (auto r_id = refs_->get_remote_branch_commit(remote_part, branch_part)) {
+            return r_id;
+        }
+    }
     if (rev.size() == 64) {
         try {
             ObjectId id = ObjectId::from_hex(rev);
@@ -1629,6 +1690,617 @@ void Repository::export_to_git(const std::filesystem::path& target_git_dir) {
         std::string checkout_cmd = "git -C \"" + target_git_dir.string() + "\" checkout -f main";
         std::system(checkout_cmd.c_str());
     }
+}
+
+std::vector<Repository::RemoteInfo> Repository::list_remotes() const {
+    std::vector<RemoteInfo> result;
+    auto all = config_->get_all_merged();
+    std::set<std::string> names;
+    for (const auto& [k, v] : all) {
+        if (k.rfind("remote.", 0) == 0 && k.size() > 11 && k.substr(k.size() - 4) == ".url") {
+            std::string name = k.substr(7, k.size() - 11);
+            if (!name.empty() && names.insert(name).second) {
+                result.push_back({name, v});
+            }
+        }
+    }
+    return result;
+}
+
+void Repository::add_remote(const std::string& name, const std::string& url) {
+    if (name.empty()) throw std::runtime_error("Remote name cannot be empty");
+    if (url.empty()) throw std::runtime_error("Remote URL/path cannot be empty");
+    if (get_remote_url(name)) {
+        throw std::runtime_error("Remote '" + name + "' already exists");
+    }
+    config_->set_local("remote." + name + ".url", url);
+    config_->save();
+}
+
+void Repository::remove_remote(const std::string& name) {
+    if (!get_remote_url(name)) {
+        throw std::runtime_error("No such remote: '" + name + "'");
+    }
+    config_->unset_local("remote." + name + ".url");
+    config_->save();
+
+    std::filesystem::path rdir = git_dir_ / "refs" / "remotes" / name;
+    std::error_code ec;
+    std::filesystem::remove_all(rdir, ec);
+}
+
+std::optional<std::string> Repository::get_remote_url(const std::string& name) const {
+    return config_->get("remote." + name + ".url");
+}
+
+void Repository::set_remote_url(const std::string& name, const std::string& url) {
+    if (!get_remote_url(name)) {
+        throw std::runtime_error("No such remote: '" + name + "'");
+    }
+    config_->set_local("remote." + name + ".url", url);
+    config_->save();
+}
+
+static void copy_tree_objects(const ObjectStore& src_store, ObjectStore& dst_store, const ObjectId& tree_id, size_t& count) {
+    if (tree_id.is_zero()) return;
+    if (dst_store.has_object(tree_id)) return;
+
+    RawObject obj = src_store.read_object(tree_id);
+    dst_store.write_object(obj.type, obj.data);
+    count++;
+
+    Tree tree = Tree::deserialize(obj.data);
+    for (const auto& entry : tree.entries()) {
+        if (entry.type == ObjectType::Tree) {
+            copy_tree_objects(src_store, dst_store, entry.id, count);
+        } else if (!dst_store.has_object(entry.id)) {
+            RawObject bobj = src_store.read_object(entry.id);
+            dst_store.write_object(bobj.type, bobj.data);
+            count++;
+        }
+    }
+}
+
+static void copy_commit_and_ancestors(const ObjectStore& src_store, ObjectStore& dst_store, const ObjectId& commit_id, size_t& count) {
+    if (commit_id.is_zero() || dst_store.has_object(commit_id)) return;
+
+    std::queue<ObjectId> q;
+    q.push(commit_id);
+
+    while (!q.empty()) {
+        ObjectId cur = q.front();
+        q.pop();
+
+        if (dst_store.has_object(cur)) continue;
+
+        RawObject obj = src_store.read_object(cur);
+        if (obj.type != ObjectType::Commit) continue;
+
+        Commit commit = Commit::deserialize(obj.data);
+        copy_tree_objects(src_store, dst_store, commit.tree_id, count);
+
+        dst_store.write_object(obj.type, obj.data);
+        count++;
+
+        for (const auto& p : commit.parents) {
+            if (!dst_store.has_object(p)) {
+                q.push(p);
+            }
+        }
+    }
+}
+
+static bool is_ancestor_commit(const ObjectStore& store, const ObjectId& ancestor_id, const ObjectId& descendant_id) {
+    if (ancestor_id == descendant_id) return true;
+    if (ancestor_id.is_zero() || descendant_id.is_zero()) return false;
+
+    std::queue<ObjectId> q;
+    std::unordered_set<ObjectId> visited;
+    q.push(descendant_id);
+    visited.insert(descendant_id);
+
+    while (!q.empty()) {
+        ObjectId cur = q.front();
+        q.pop();
+
+        if (cur == ancestor_id) return true;
+        if (!store.has_object(cur)) continue;
+
+        try {
+            RawObject ro = store.read_object(cur);
+            if (ro.type != ObjectType::Commit) continue;
+            Commit com = Commit::deserialize(ro.data);
+            for (const auto& p : com.parents) {
+                if (visited.insert(p).second) {
+                    q.push(p);
+                }
+            }
+        } catch (...) {}
+    }
+    return false;
+}
+
+Repository::FetchResult Repository::fetch_remote(const std::string& remote_name, const std::string& branch_name) {
+    auto url_opt = get_remote_url(remote_name);
+    if (!url_opt) {
+        throw std::runtime_error("Remote '" + remote_name + "' does not exist");
+    }
+
+    FetchResult result;
+    result.remote = remote_name;
+
+    Repository remote_repo = Repository::open(*url_opt);
+    std::vector<std::string> branches_to_fetch;
+    if (!branch_name.empty()) {
+        branches_to_fetch.push_back(branch_name);
+    } else {
+        branches_to_fetch = remote_repo.refs().list_branches();
+    }
+
+    for (const auto& b : branches_to_fetch) {
+        auto r_commit = remote_repo.refs().get_branch_commit(b);
+        if (!r_commit) continue;
+
+        auto local_tracking = refs_->get_remote_branch_commit(remote_name, b);
+        if (local_tracking && *local_tracking == *r_commit) {
+            continue;
+        }
+
+        FetchBranchResult fb;
+        fb.branch = b;
+        fb.old_commit = local_tracking.value_or(ObjectId::zero());
+        fb.new_commit = *r_commit;
+        fb.is_new = !local_tracking;
+        fb.is_fast_forward = (!fb.is_new) && is_ancestor_commit(*objects_, fb.old_commit, fb.new_commit);
+
+        copy_commit_and_ancestors(remote_repo.objects(), *objects_, *r_commit, result.objects_transferred);
+        refs_->set_remote_branch_commit(remote_name, b, *r_commit);
+        result.updated_branches.push_back(std::move(fb));
+    }
+
+    return result;
+}
+
+Repository::PushResult Repository::push_remote(const std::string& remote_name, const std::string& branch_name, bool force) {
+    auto url_opt = get_remote_url(remote_name);
+    if (!url_opt) {
+        throw std::runtime_error("Remote '" + remote_name + "' does not exist");
+    }
+
+    std::string bname = branch_name;
+    if (bname.empty()) {
+        bname = refs_->get_current_branch();
+        if (bname.empty()) {
+            throw std::runtime_error("Cannot push from detached HEAD");
+        }
+    }
+
+    auto local_commit = refs_->get_branch_commit(bname);
+    if (!local_commit) {
+        throw std::runtime_error("Branch '" + bname + "' does not exist locally or has no commits");
+    }
+
+    PushResult result;
+    result.remote = remote_name;
+
+    Repository remote_repo = Repository::open(*url_opt);
+    auto remote_commit = remote_repo.refs().get_branch_commit(bname);
+
+    PushBranchResult pb;
+    pb.branch = bname;
+    pb.old_commit = remote_commit.value_or(ObjectId::zero());
+    pb.new_commit = *local_commit;
+    pb.is_new = !remote_commit;
+
+    if (remote_commit) {
+        if (*remote_commit == *local_commit) {
+            pb.is_fast_forward = true;
+            result.results.push_back(std::move(pb));
+            return result;
+        }
+        bool is_ff = is_ancestor_commit(*objects_, *remote_commit, *local_commit);
+        pb.is_fast_forward = is_ff;
+        if (!is_ff && !force) {
+            pb.rejected = true;
+            pb.message = "Updates were rejected because the remote contains work that you do not have locally. Run 'lgit pull' before pushing again.";
+            result.results.push_back(std::move(pb));
+            throw std::runtime_error(pb.message);
+        }
+    } else {
+        pb.is_fast_forward = true;
+    }
+
+    copy_commit_and_ancestors(*objects_, remote_repo.objects(), *local_commit, result.objects_transferred);
+    remote_repo.refs().set_branch_commit(bname, *local_commit);
+    refs_->set_remote_branch_commit(remote_name, bname, *local_commit);
+
+    // If remote repository is non-bare and has this branch checked out, update its tree if clean
+    if (!remote_repo.is_bare() && remote_repo.refs().get_current_branch() == bname) {
+        RepoStatus rstatus = remote_repo.compute_status();
+        if (rstatus.is_clean()) {
+            remote_repo.reset(*local_commit, ResetMode::Hard);
+        }
+    }
+
+    result.results.push_back(std::move(pb));
+    return result;
+}
+
+Repository::PullResult Repository::pull_remote(const std::string& remote_name, const std::string& branch_name) {
+    std::string bname = branch_name;
+    if (bname.empty()) {
+        bname = refs_->get_current_branch();
+        if (bname.empty()) {
+            throw std::runtime_error("Cannot pull into detached HEAD");
+        }
+    }
+
+    PullResult res;
+    res.fetch_res = fetch_remote(remote_name, bname);
+
+    auto tracking_commit = refs_->get_remote_branch_commit(remote_name, bname);
+    if (!tracking_commit) {
+        throw std::runtime_error("Cannot pull: no tracking branch found for '" + remote_name + "/" + bname + "'");
+    }
+
+    res.merge_res = merge(tracking_commit->to_hex());
+    return res;
+}
+
+Repository Repository::clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch) {
+    if (std::filesystem::exists(target_dir) && !std::filesystem::is_empty(target_dir)) {
+        throw std::runtime_error("Destination path '" + target_dir.string() + "' already exists and is not an empty directory");
+    }
+
+    std::filesystem::path src_path(source_url_or_path);
+    if (std::filesystem::is_regular_file(src_path)) {
+        std::filesystem::create_directories(target_dir);
+        Repository repo = Repository::init(target_dir, false, branch.empty() ? "main" : branch);
+        repo.unbundle(src_path);
+
+        std::string target_branch = branch;
+        if (target_branch.empty()) {
+            auto branches = repo.refs().list_branches();
+            target_branch = branches.empty() ? "main" : branches.front();
+        }
+        if (auto cid = repo.refs().get_branch_commit(target_branch)) {
+            repo.refs().set_head_symbolic(target_branch);
+            repo.reset(*cid, ResetMode::Hard);
+        }
+        return repo;
+    }
+
+    Repository src_repo = Repository::open(source_url_or_path);
+    std::string default_branch = branch;
+    if (default_branch.empty()) {
+        default_branch = src_repo.refs().get_current_branch();
+        if (default_branch.empty()) {
+            auto b_list = src_repo.refs().list_branches();
+            default_branch = b_list.empty() ? "main" : b_list.front();
+        }
+    }
+
+    std::filesystem::create_directories(target_dir);
+    Repository repo = Repository::init(target_dir, false, default_branch);
+    repo.add_remote("origin", std::filesystem::absolute(src_path).string());
+    repo.fetch_remote("origin", default_branch);
+
+    if (auto r_cid = repo.refs().get_remote_branch_commit("origin", default_branch)) {
+        repo.refs().set_branch_commit(default_branch, *r_cid);
+        repo.refs().set_head_symbolic(default_branch);
+        repo.reset(*r_cid, ResetMode::Hard);
+    }
+
+    return repo;
+}
+
+void Repository::create_bundle(const std::filesystem::path& bundle_path, const std::vector<std::string>& revs) {
+    std::vector<std::pair<std::string, ObjectId>> ref_list;
+    if (revs.empty()) {
+        for (const auto& b : refs_->list_branches()) {
+            if (auto id = refs_->get_branch_commit(b)) {
+                ref_list.push_back({"refs/heads/" + b, *id});
+            }
+        }
+        for (const auto& t : refs_->list_tags()) {
+            if (auto id = refs_->get_tag(t)) {
+                ref_list.push_back({"refs/tags/" + t, *id});
+            }
+        }
+        if (refs_->is_head_detached()) {
+            ObjectId hid = refs_->resolve_head();
+            if (hid) ref_list.push_back({"HEAD", hid});
+        }
+    } else {
+        for (const auto& r : revs) {
+            auto id = resolve_revision(r);
+            if (!id) throw std::runtime_error("Cannot resolve revision '" + r + "' for bundle");
+            ref_list.push_back({r, *id});
+        }
+    }
+
+    if (ref_list.empty()) {
+        throw std::runtime_error("No references to include in bundle");
+    }
+
+    std::unordered_set<ObjectId> reachable;
+    for (const auto& [rname, rid] : ref_list) {
+        mark_reachable_commit(*objects_, rid, reachable);
+    }
+
+    std::vector<uint8_t> buffer;
+    static constexpr uint8_t MAGIC[8] = {'L', 'G', 'I', 'T', 'P', 'A', 'C', 'K'};
+    buffer.insert(buffer.end(), std::begin(MAGIC), std::end(MAGIC));
+    buffer.push_back(1);
+    buffer.push_back(0);
+
+    uint32_t num_refs = static_cast<uint32_t>(ref_list.size());
+    for (int i = 0; i < 4; ++i) buffer.push_back(static_cast<uint8_t>((num_refs >> (i * 8)) & 0xFF));
+
+    for (const auto& [rname, rid] : ref_list) {
+        uint16_t nlen = static_cast<uint16_t>(rname.size());
+        buffer.push_back(static_cast<uint8_t>(nlen & 0xFF));
+        buffer.push_back(static_cast<uint8_t>((nlen >> 8) & 0xFF));
+        buffer.insert(buffer.end(), rname.begin(), rname.end());
+        buffer.insert(buffer.end(), rid.bytes.begin(), rid.bytes.end());
+    }
+
+    uint32_t num_objs = static_cast<uint32_t>(reachable.size());
+    for (int i = 0; i < 4; ++i) buffer.push_back(static_cast<uint8_t>((num_objs >> (i * 8)) & 0xFF));
+
+    for (const auto& oid : reachable) {
+        RawObject obj = objects_->read_object(oid);
+        buffer.insert(buffer.end(), oid.bytes.begin(), oid.bytes.end());
+        buffer.push_back(static_cast<uint8_t>(obj.type));
+        uint64_t osize = static_cast<uint64_t>(obj.data.size());
+        for (int i = 0; i < 8; ++i) buffer.push_back(static_cast<uint8_t>((osize >> (i * 8)) & 0xFF));
+        buffer.insert(buffer.end(), obj.data.begin(), obj.data.end());
+    }
+
+    ObjectId checksum = hash_bytes(buffer.data(), buffer.size());
+    buffer.insert(buffer.end(), checksum.bytes.begin(), checksum.bytes.end());
+
+    fs_util::atomic_write_file(bundle_path, buffer.data(), buffer.size());
+}
+
+Repository::BundleInfo Repository::verify_bundle(const std::filesystem::path& bundle_path) {
+    if (!std::filesystem::exists(bundle_path)) {
+        throw std::runtime_error("Bundle file does not exist: " + bundle_path.string());
+    }
+    std::vector<uint8_t> data = fs_util::read_file_bytes(bundle_path);
+    if (data.size() < 10 + 4 + 4 + 32) {
+        throw std::runtime_error("Invalid or truncated bundle file: " + bundle_path.string());
+    }
+
+    static constexpr uint8_t MAGIC[8] = {'L', 'G', 'I', 'T', 'P', 'A', 'C', 'K'};
+    if (std::memcmp(data.data(), MAGIC, 8) != 0) {
+        throw std::runtime_error("Not a light-git bundle archive: " + bundle_path.string());
+    }
+
+    size_t payload_len = data.size() - 32;
+    ObjectId expected = hash_bytes(data.data(), payload_len);
+    ObjectId actual;
+    std::memcpy(actual.bytes.data(), data.data() + payload_len, 32);
+    if (expected != actual) {
+        throw std::runtime_error("Bundle checksum verification failed (corrupted file): " + bundle_path.string());
+    }
+
+    BundleInfo info;
+    size_t pos = 10;
+    uint32_t num_refs = 0;
+    for (int i = 0; i < 4; ++i) num_refs |= (static_cast<uint32_t>(data[pos + i]) << (i * 8));
+    pos += 4;
+
+    for (uint32_t i = 0; i < num_refs; ++i) {
+        if (pos + 2 > payload_len) throw std::runtime_error("Truncated bundle references");
+        uint16_t nlen = static_cast<uint16_t>(data[pos]) | (static_cast<uint16_t>(data[pos + 1]) << 8);
+        pos += 2;
+        if (pos + nlen + 32 > payload_len) throw std::runtime_error("Truncated bundle reference entry");
+        std::string rname(reinterpret_cast<const char*>(&data[pos]), nlen);
+        pos += nlen;
+        ObjectId rid;
+        std::memcpy(rid.bytes.data(), &data[pos], 32);
+        pos += 32;
+        info.references[rname] = rid;
+    }
+
+    if (pos + 4 > payload_len) throw std::runtime_error("Truncated bundle objects count");
+    uint32_t num_objs = 0;
+    for (int i = 0; i < 4; ++i) num_objs |= (static_cast<uint32_t>(data[pos + i]) << (i * 8));
+    info.object_count = num_objs;
+
+    return info;
+}
+
+Repository::BundleInfo Repository::unbundle(const std::filesystem::path& bundle_path) {
+    BundleInfo info = verify_bundle(bundle_path);
+    std::vector<uint8_t> data = fs_util::read_file_bytes(bundle_path);
+
+    size_t pos = 10;
+    uint32_t num_refs = 0;
+    for (int i = 0; i < 4; ++i) num_refs |= (static_cast<uint32_t>(data[pos + i]) << (i * 8));
+    pos += 4;
+
+    for (uint32_t i = 0; i < num_refs; ++i) {
+        uint16_t nlen = static_cast<uint16_t>(data[pos]) | (static_cast<uint16_t>(data[pos + 1]) << 8);
+        pos += 2 + nlen + 32;
+    }
+
+    uint32_t num_objs = 0;
+    for (int i = 0; i < 4; ++i) num_objs |= (static_cast<uint32_t>(data[pos + i]) << (i * 8));
+    pos += 4;
+
+    for (uint32_t i = 0; i < num_objs; ++i) {
+        if (pos + 32 + 1 + 8 > data.size() - 32) throw std::runtime_error("Truncated bundle object header");
+        ObjectId oid;
+        std::memcpy(oid.bytes.data(), &data[pos], 32);
+        pos += 32;
+        ObjectType otype = static_cast<ObjectType>(data[pos]);
+        pos += 1;
+        uint64_t osize = 0;
+        for (int b = 0; b < 8; ++b) osize |= (static_cast<uint64_t>(data[pos + b]) << (b * 8));
+        pos += 8;
+        if (pos + osize > data.size() - 32) throw std::runtime_error("Truncated bundle object data");
+
+        if (!objects_->has_object(oid)) {
+            objects_->write_object(otype, &data[pos], static_cast<size_t>(osize));
+        }
+        pos += static_cast<size_t>(osize);
+    }
+
+    for (const auto& [rname, rid] : info.references) {
+        if (rname.rfind("refs/heads/", 0) == 0) {
+            refs_->set_branch_commit(rname.substr(11), rid);
+        } else if (rname.rfind("refs/tags/", 0) == 0) {
+            refs_->set_tag(rname.substr(10), rid);
+        } else if (rname.find('/') == std::string::npos) {
+            refs_->set_branch_commit(rname, rid);
+        }
+    }
+
+    return info;
+}
+
+std::vector<Repository::WorktreeInfo> Repository::list_worktrees() const {
+    std::vector<WorktreeInfo> result;
+
+    WorktreeInfo main_wt;
+    main_wt.name = work_dir_.filename().string();
+    main_wt.path = work_dir_;
+    main_wt.branch = refs_->is_head_detached() ? "detached HEAD" : refs_->get_current_branch();
+    main_wt.commit_id = refs_->resolve_head();
+    main_wt.is_main = true;
+    main_wt.is_locked = false;
+    result.push_back(std::move(main_wt));
+
+    std::filesystem::path wt_dir = git_dir_ / "worktrees";
+    if (std::filesystem::exists(wt_dir)) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(wt_dir, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            std::string wt_name = entry.path().filename().string();
+            std::filesystem::path gitdir_file = entry.path() / "gitdir";
+            if (!std::filesystem::exists(gitdir_file)) continue;
+
+            std::string target_link = fs_util::read_file_string(gitdir_file);
+            while (!target_link.empty() && (target_link.back() == '\r' || target_link.back() == '\n' || target_link.back() == ' ')) target_link.pop_back();
+
+            std::filesystem::path wt_path = std::filesystem::path(target_link).parent_path();
+            WorktreeInfo wt;
+            wt.name = wt_name;
+            wt.path = wt_path;
+            wt.is_main = false;
+            wt.is_locked = std::filesystem::exists(entry.path() / "locked");
+
+            std::filesystem::path head_f = entry.path() / "HEAD";
+            if (std::filesystem::exists(head_f)) {
+                std::string hcontent = fs_util::read_file_string(head_f);
+                while (!hcontent.empty() && (hcontent.back() == '\r' || hcontent.back() == '\n' || hcontent.back() == ' ')) hcontent.pop_back();
+                static constexpr std::string_view pfx = "ref: refs/heads/";
+                if (hcontent.rfind(pfx, 0) == 0) {
+                    wt.branch = hcontent.substr(pfx.size());
+                    auto cid = refs_->get_branch_commit(wt.branch);
+                    wt.commit_id = cid ? *cid : ObjectId::zero();
+                } else {
+                    wt.branch = "detached HEAD";
+                    try { wt.commit_id = ObjectId::from_hex(hcontent); } catch (...) {}
+                }
+            }
+
+            result.push_back(std::move(wt));
+        }
+    }
+
+    return result;
+}
+
+void Repository::add_worktree(const std::filesystem::path& worktree_path, const std::string& branch_name) {
+    if (branch_name.empty()) {
+        throw std::runtime_error("Branch name must be specified when creating a worktree");
+    }
+
+    std::filesystem::path abs_path = std::filesystem::absolute(worktree_path);
+    if (std::filesystem::exists(abs_path) && !std::filesystem::is_empty(abs_path)) {
+        throw std::runtime_error("Worktree path '" + abs_path.string() + "' already exists and is not empty");
+    }
+
+    if (!refs_->branch_exists(branch_name)) {
+        ObjectId head_id = refs_->resolve_head();
+        if (!head_id) {
+            throw std::runtime_error("Cannot create branch for worktree on empty repository");
+        }
+        create_branch(branch_name, head_id);
+    }
+
+    std::string wt_name = abs_path.filename().string();
+    std::filesystem::path meta_dir = git_dir_ / "worktrees" / wt_name;
+    std::filesystem::create_directories(meta_dir);
+
+    fs_util::atomic_write_file(meta_dir / "commondir", std::filesystem::absolute(git_dir_).string() + "\n");
+    fs_util::atomic_write_file(meta_dir / "gitdir", (abs_path / ".light-git").string() + "\n");
+    fs_util::atomic_write_file(meta_dir / "HEAD", "ref: refs/heads/" + branch_name + "\n");
+
+    std::filesystem::create_directories(abs_path);
+    fs_util::atomic_write_file(abs_path / ".light-git", "gitdir: " + std::filesystem::absolute(meta_dir).string() + "\n");
+
+    Repository wt_repo = Repository::open(abs_path);
+    auto cid = refs_->get_branch_commit(branch_name);
+    if (cid) {
+        wt_repo.reset(*cid, ResetMode::Hard);
+    }
+}
+
+void Repository::remove_worktree(const std::filesystem::path& worktree_path, bool force) {
+    std::filesystem::path abs_path = std::filesystem::absolute(worktree_path);
+    if (abs_path == std::filesystem::absolute(work_dir_)) {
+        throw std::runtime_error("Cannot remove main worktree");
+    }
+
+    std::string wt_name = abs_path.filename().string();
+    std::filesystem::path meta_dir = git_dir_ / "worktrees" / wt_name;
+
+    if (!force && std::filesystem::exists(abs_path / ".light-git")) {
+        try {
+            Repository wt_repo = Repository::open(abs_path);
+            if (!wt_repo.compute_status().is_clean()) {
+                throw std::runtime_error("Worktree '" + abs_path.string() + "' contains modified or untracked files (use --force to discard)");
+            }
+        } catch (const std::exception&) {
+            if (!force) throw;
+        }
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(abs_path, ec);
+    std::filesystem::remove_all(meta_dir, ec);
+}
+
+size_t Repository::prune_worktrees() {
+    size_t count = 0;
+    std::filesystem::path wt_dir = git_dir_ / "worktrees";
+    if (!std::filesystem::exists(wt_dir)) return 0;
+
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(wt_dir, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        std::filesystem::path gitdir_file = entry.path() / "gitdir";
+        bool prune_needed = false;
+        if (!std::filesystem::exists(gitdir_file)) {
+            prune_needed = true;
+        } else {
+            std::string target_link = fs_util::read_file_string(gitdir_file);
+            while (!target_link.empty() && (target_link.back() == '\r' || target_link.back() == '\n' || target_link.back() == ' ')) target_link.pop_back();
+            if (!std::filesystem::exists(target_link)) {
+                prune_needed = true;
+            }
+        }
+
+        if (prune_needed) {
+            std::filesystem::remove_all(entry.path(), ec);
+            count++;
+        }
+    }
+    return count;
 }
 
 } // namespace light_git

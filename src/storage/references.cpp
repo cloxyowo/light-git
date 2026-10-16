@@ -6,8 +6,8 @@
 
 namespace light_git {
 
-References::References(std::filesystem::path git_dir)
-    : git_dir_(std::move(git_dir)) {
+References::References(std::filesystem::path git_dir, std::filesystem::path head_file)
+    : git_dir_(std::move(git_dir)), head_file_(std::move(head_file)) {
 }
 
 static std::string trim_ref(std::string_view sv) {
@@ -166,6 +166,70 @@ std::vector<std::string> References::list_tags() const {
     return tags;
 }
 
+std::optional<ObjectId> References::get_remote_branch_commit(const std::string& remote_name, const std::string& branch_name) const {
+    std::filesystem::path rpath = remotes_dir() / remote_name / branch_name;
+    if (!std::filesystem::exists(rpath)) {
+        return std::nullopt;
+    }
+    std::string content = trim_ref(fs_util::read_file_string(rpath));
+    if (content.empty()) {
+        throw std::runtime_error("corrupted remote tracking reference 'refs/remotes/" + remote_name + "/" + branch_name + "': file is empty");
+    }
+    try {
+        return ObjectId::from_hex(content);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("corrupted remote tracking reference 'refs/remotes/" + remote_name + "/" + branch_name + "': " + e.what());
+    }
+}
+
+void References::set_remote_branch_commit(const std::string& remote_name, const std::string& branch_name, const ObjectId& commit_id) {
+    std::filesystem::path rpath = remotes_dir() / remote_name / branch_name;
+    std::string content = commit_id.to_hex() + "\n";
+    fs_util::atomic_write_file(rpath, content);
+}
+
+bool References::delete_remote_branch(const std::string& remote_name, const std::string& branch_name) {
+    std::filesystem::path rpath = remotes_dir() / remote_name / branch_name;
+    std::error_code ec;
+    return std::filesystem::remove(rpath, ec);
+}
+
+std::vector<std::string> References::list_remote_branches(const std::string& remote_name) const {
+    std::vector<std::string> branches;
+    std::filesystem::path rdir = remotes_dir() / remote_name;
+    if (!std::filesystem::exists(rdir)) {
+        return branches;
+    }
+
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(rdir, ec)) {
+        if (entry.is_regular_file(ec)) {
+            auto rel = entry.path().lexically_relative(rdir);
+            branches.push_back(fs_util::normalize_path(rel));
+        }
+    }
+    std::sort(branches.begin(), branches.end());
+    return branches;
+}
+
+std::vector<std::pair<std::string, std::string>> References::list_all_remote_branches() const {
+    std::vector<std::pair<std::string, std::string>> result;
+    if (!std::filesystem::exists(remotes_dir())) {
+        return result;
+    }
+
+    std::error_code ec;
+    for (const auto& rentry : std::filesystem::directory_iterator(remotes_dir(), ec)) {
+        if (rentry.is_directory(ec)) {
+            std::string rname = rentry.path().filename().string();
+            for (const auto& b : list_remote_branches(rname)) {
+                result.push_back({rname, b});
+            }
+        }
+    }
+    return result;
+}
+
 std::vector<std::pair<std::string, ObjectId>> References::list_all_references() const {
     std::vector<std::pair<std::string, ObjectId>> refs;
 
@@ -182,6 +246,14 @@ std::vector<std::pair<std::string, ObjectId>> References::list_all_references() 
         auto id = get_tag(t);
         if (id) {
             refs.push_back({"refs/tags/" + t, *id});
+        }
+    }
+
+    // Remote tracking branches
+    for (const auto& [rname, bname] : list_all_remote_branches()) {
+        auto id = get_remote_branch_commit(rname, bname);
+        if (id) {
+            refs.push_back({"refs/remotes/" + rname + "/" + bname, *id});
         }
     }
 

@@ -136,3 +136,52 @@ Every write to the index, reference pointers, configuration, or object files is 
 - POSIX: `rename(...)`
 
 This guarantees that power outages or process terminations never leave half-written objects or corrupted references.
+
+---
+
+## 6. Linked Working Trees (`lgit worktree`)
+
+A repository can support multiple concurrent working directories linked to the main database:
+
+- **Main Repository:** Contains the shared database in `.light-git/` (`objects/`, `refs/`, `config`) and `.light-git/worktrees/<name>/`.
+- **Linked Worktree Root:** Contains a `.light-git` regular file instead of a directory:
+  ```
+  gitdir: <path_to_main_repo>/.light-git/worktrees/<name>
+  ```
+- **Worktree Metadata Directory (`.light-git/worktrees/<name>/`):**
+  - `commondir`: Relative or absolute path to the main repository (`../../`) containing shared objects and references.
+  - `HEAD`: Isolated current branch reference or detached commit for this specific working tree.
+  - `index`: Isolated binary staging area index for this specific working tree.
+
+---
+
+## 7. Portable Bundle Format (`.lgitpack`)
+
+A `.lgitpack` file is a portable, zero-dependency, self-contained binary archive:
+
+```
++-----------------------------------+
+| Magic Header: "LGITPACK" (8B)     |
++-----------------------------------+
+| Version: uint16 (0x0100 -> v1.0)  |
++-----------------------------------+
+| Ref Count: uint32                 |
++-----------------------------------+
+| References (repeated Ref Count):  |
+|   - Ref name len: uint16          |
+|   - Ref name: UTF-8 string        |
+|   - Target Commit ID: 32B binary  |
++-----------------------------------+
+| Object Count: uint32              |
++-----------------------------------+
+| Objects (repeated Object Count):  |
+|   - Object Type: uint8            |
+|   - Payload Size: uint64          |
+|   - Payload: [Payload Size] bytes |
++-----------------------------------+
+| SHA-256 Trailer: 32 bytes binary  |
++-----------------------------------+
+```
+
+The 32-byte SHA-256 trailer seals the entire byte stream from byte 0 to the end of the objects, ensuring bit-for-bit integrity verification before any objects are unpacked.
+

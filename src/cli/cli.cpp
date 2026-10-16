@@ -54,6 +54,7 @@ void CliDispatcher::print_general_help() const {
         "init", "status", "add", "commit", "log", "diff",
         "branch", "switch", "restore", "reset", "show", "rm", "mv",
         "tag", "stash", "merge", "cherry-pick", "export-git",
+        "remote", "fetch", "push", "pull", "clone", "bundle", "worktree",
         "check-ignore", "config", "gc", "fsck"
     };
 
@@ -72,8 +73,7 @@ void CliDispatcher::print_general_help() const {
 
     std::cout << "\n" << Terminal::bold("PLANNED / ROADMAP COMMANDS:") << "\n";
     std::vector<std::string> future_cmds = {
-        "clone", "fetch", "pull", "push", "remote",
-        "rebase", "worktree", "ui", "sign", "bundle", "daemon"
+        "rebase", "ui", "sign", "daemon"
     };
 
     for (const auto& cname : future_cmds) {

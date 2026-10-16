@@ -153,6 +153,13 @@ lgit switch -c feature/login
 | `lgit merge` | Three-way merge branches with conflict markers (`<<<<<<< HEAD`). |
 | `lgit cherry-pick` | Apply the changes introduced by an existing commit. |
 | `lgit export-git` | Export repository to Git fast-import format to push to GitHub. |
+| `lgit remote` | Manage tracked remotes (`add`, `remove`, `get-url`, `set-url`, `-v`). |
+| `lgit fetch` | Download objects and refs into remote tracking branches. |
+| `lgit push` | Update remote branch refs with local objects (`--force`). |
+| `lgit pull` | Fetch and 3-way merge remote tracking branch into current branch. |
+| `lgit clone` | Clone a repository or `.lgitpack` bundle into a new directory. |
+| `lgit bundle` | Package and verify portable binary `.lgitpack` archives. |
+| `lgit worktree` | Manage multiple concurrent working trees (`add`, `list`, `remove`, `prune`). |
 | `lgit check-ignore` | Debug and inspect which `.light-gitignore` rule matches a path. |
 | `lgit config` | Read or set configuration options locally or `--global`. |
 | `lgit gc` | Clean unreachable objects via mark-and-sweep garbage collection. |
@@ -275,17 +282,18 @@ Full technical documentation is located in the `docs/` directory:
 - [x] History cherry-picking (`lgit cherry-pick <commit>`)
 - [x] Git fast-import bridge (`lgit export-git`) to export repositories and push to GitHub
 
-### Milestone 3: Distributed Collaboration & Networking (Next)
-- [ ] Direct repository remote synchronization (`lgit remote`, `lgit push`, `lgit pull`, `lgit fetch`)
-- [ ] Peer-to-peer / LAN repository discovery daemon (`lgit daemon`)
-- [ ] Compressed portable archive bundles (`lgit bundle` / `.lgitpack`)
-- [ ] Multi-working tree support (`lgit worktree`)
+### Milestone 3: Distributed Collaboration & Networking (Completed)
+- [x] Direct repository remote synchronization (`lgit remote`, `lgit push`, `lgit pull`, `lgit fetch`)
+- [x] Repository cloning from directory or bundles (`lgit clone`)
+- [x] Portable zero-dependency binary archive bundles (`lgit bundle` / `.lgitpack`)
+- [x] Multi-working tree support with isolated HEAD and staging index (`lgit worktree`)
 
 ### Milestone 4: Cryptographic Security & Developer UX (Next)
 - [ ] Native Ed25519 commit and tag signing (`lgit sign`)
 - [ ] Interactive terminal rebase (`lgit rebase -i`)
 - [ ] Embedded zero-dependency local web dashboard and graph visualizer (`lgit ui`)
 - [ ] Staging patch mode (`lgit add -p`)
+- [ ] Peer-to-peer / LAN repository discovery daemon (`lgit daemon`)
 
 ---
 

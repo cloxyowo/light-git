@@ -31,6 +31,13 @@ int cmd_stash(const CommandContext& ctx);
 int cmd_merge(const CommandContext& ctx);
 int cmd_cherry_pick(const CommandContext& ctx);
 int cmd_export_git(const CommandContext& ctx);
+int cmd_remote(const CommandContext& ctx);
+int cmd_fetch(const CommandContext& ctx);
+int cmd_push(const CommandContext& ctx);
+int cmd_pull(const CommandContext& ctx);
+int cmd_clone(const CommandContext& ctx);
+int cmd_bundle(const CommandContext& ctx);
+int cmd_worktree(const CommandContext& ctx);
 int cmd_future_stub(const CommandContext& ctx);
 
 } // namespace commands

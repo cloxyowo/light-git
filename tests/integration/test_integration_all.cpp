@@ -395,6 +395,141 @@ TEST(Integration_RevisionTraversalAndGcStash) {
     ASSERT_EQ(sb.read_file("file.txt"), "v3 stashed changes\n");
 }
 
+TEST(Integration_RemoteAndSyncWorkflow) {
+    Sandbox sb_local("sync_local");
+    Sandbox sb_remote("sync_remote");
+
+    // Init remote repository as bare repo
+    Repository repo_remote = Repository::init(sb_remote.path, true, "main");
+
+    // Init local repository
+    Repository repo_local = Repository::init(sb_local.path, false, "main");
+    repo_local.config().set_local("user.name", "Tester");
+    repo_local.config().set_local("user.email", "tester@lightgit.local");
+
+    // Remote operations: add, get-url, list
+    repo_local.add_remote("origin", sb_remote.path.string());
+    auto remotes = repo_local.list_remotes();
+    ASSERT_EQ(remotes.size(), 1);
+    ASSERT_EQ(remotes[0].name, "origin");
+    ASSERT_EQ(repo_local.get_remote_url("origin"), sb_remote.path.string());
+
+    // Create commit on local and push
+    sb_local.write_file("greeting.txt", "Hello from local\n");
+    repo_local.stage_all();
+    ObjectId c1 = repo_local.create_commit("Initial local commit");
+
+    auto push_res = repo_local.push_remote("origin", "main");
+    ASSERT_EQ(push_res.results.size(), 1);
+    ASSERT_TRUE(push_res.results[0].is_new);
+    ASSERT_EQ(push_res.results[0].new_commit, c1);
+
+    // Verify remote has the commit
+    auto r_cid = repo_remote.refs().get_branch_commit("main");
+    ASSERT_TRUE(r_cid);
+    ASSERT_EQ(*r_cid, c1);
+
+    // Push again: should report everything up to date
+    auto push_res2 = repo_local.push_remote("origin", "main");
+    ASSERT_EQ(push_res2.results[0].old_commit, push_res2.results[0].new_commit);
+
+    // Remove remote
+    repo_local.remove_remote("origin");
+    ASSERT_EQ(repo_local.list_remotes().size(), 0);
+}
+
+TEST(Integration_BundleAndCloneWorkflow) {
+    Sandbox sb_src("bundle_src");
+    Sandbox sb_dst("bundle_dst");
+    Sandbox sb_clone("clone_dir");
+
+    Repository repo_src = Repository::init(sb_src.path, false, "main");
+    repo_src.config().set_local("user.name", "Tester");
+    repo_src.config().set_local("user.email", "tester@lightgit.local");
+
+    sb_src.write_file("doc.md", "# Documentation\n");
+    repo_src.stage_all();
+    ObjectId c1 = repo_src.create_commit("First doc");
+    repo_src.create_tag("v1.0.0");
+
+    sb_src.write_file("doc.md", "# Documentation v2\n");
+    repo_src.stage_all();
+    ObjectId c2 = repo_src.create_commit("Second doc");
+
+    // 1. Create and verify bundle (.lgitpack)
+    std::filesystem::path bundle_file = sb_src.path / "repo.lgitpack";
+    repo_src.create_bundle(bundle_file);
+    ASSERT_TRUE(std::filesystem::exists(bundle_file));
+
+    auto binfo = Repository::verify_bundle(bundle_file);
+    ASSERT_TRUE(binfo.object_count > 0);
+    ASSERT_TRUE(binfo.references.count("refs/heads/main"));
+    ASSERT_EQ(binfo.references["refs/heads/main"], c2);
+
+    // 2. Clone from bundle
+    std::filesystem::path clone_bundle_dir = sb_dst.path / "from_bundle";
+    Repository repo_cloned_b = Repository::clone_repository(bundle_file.string(), clone_bundle_dir);
+    ASSERT_TRUE(std::filesystem::exists(clone_bundle_dir / "doc.md"));
+    ASSERT_EQ(repo_cloned_b.refs().resolve_head(), c2);
+    ASSERT_TRUE(repo_cloned_b.compute_status().is_clean());
+
+    // 3. Clone from directory repository
+    std::filesystem::path clone_repo_dir = sb_clone.path / "from_repo";
+    Repository repo_cloned_d = Repository::clone_repository(sb_src.path.string(), clone_repo_dir);
+    ASSERT_TRUE(std::filesystem::exists(clone_repo_dir / "doc.md"));
+    ASSERT_EQ(repo_cloned_d.refs().resolve_head(), c2);
+    ASSERT_TRUE(repo_cloned_d.compute_status().is_clean());
+    ASSERT_TRUE(repo_cloned_d.get_remote_url("origin"));
+}
+
+TEST(Integration_WorktreeWorkflow) {
+    Sandbox sb("worktree_main");
+    std::filesystem::path wt_path = sb.path / ".." / "test_sandbox_worktree_linked";
+    std::error_code ec;
+    std::filesystem::remove_all(wt_path, ec);
+
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("shared.txt", "Shared codebase v1\n");
+    repo.stage_all();
+    ObjectId c1 = repo.create_commit("Initial commit on main");
+
+    // 1. Add linked worktree
+    repo.add_worktree(wt_path, "feature-wt");
+    ASSERT_TRUE(std::filesystem::exists(wt_path / ".light-git"));
+    ASSERT_TRUE(std::filesystem::exists(wt_path / "shared.txt"));
+
+    // 2. List worktrees
+    auto wts = repo.list_worktrees();
+    ASSERT_EQ(wts.size(), 2);
+    ASSERT_TRUE(wts[0].is_main);
+    ASSERT_FALSE(wts[1].is_main);
+    ASSERT_EQ(wts[1].branch, "feature-wt");
+
+    // 3. Make changes in linked worktree
+    Repository wt_repo = Repository::open(wt_path);
+    ASSERT_EQ(wt_repo.refs().get_current_branch(), "feature-wt");
+    fs_util::write_file_string(wt_path / "wt_only.txt", "Created in worktree\n");
+    wt_repo.stage_all();
+    ObjectId wt_cid = wt_repo.create_commit("Feature commit in worktree");
+
+    // Main repo branch reflects the worktree commit
+    auto br_cid = repo.refs().get_branch_commit("feature-wt");
+    ASSERT_TRUE(br_cid);
+    ASSERT_EQ(*br_cid, wt_cid);
+
+    // 4. Remove worktree
+    repo.remove_worktree(wt_path, true);
+    ASSERT_FALSE(std::filesystem::exists(wt_path));
+
+    auto wts_after = repo.list_worktrees();
+    ASSERT_EQ(wts_after.size(), 1);
+
+    std::filesystem::remove_all(wt_path, ec);
+}
+
 int main() {
     return test_framework::run_all_tests();
 }

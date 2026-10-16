@@ -10,7 +10,7 @@
 
 namespace light_git {
 
-inline constexpr std::string_view LIGHT_GIT_VERSION = "0.2.0";
+inline constexpr std::string_view LIGHT_GIT_VERSION = "0.3.0";
 
 enum class ObjectType : uint8_t {
     Invalid = 0,

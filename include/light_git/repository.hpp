@@ -157,6 +157,80 @@ public:
     std::string export_git_fastimport() const;
     void export_to_git(const std::filesystem::path& target_git_dir);
 
+    // Remotes
+    struct RemoteInfo {
+        std::string name;
+        std::string url;
+    };
+    std::vector<RemoteInfo> list_remotes() const;
+    void add_remote(const std::string& name, const std::string& url);
+    void remove_remote(const std::string& name);
+    std::optional<std::string> get_remote_url(const std::string& name) const;
+    void set_remote_url(const std::string& name, const std::string& url);
+
+    // Remote Synchronization (Fetch, Push, Pull)
+    struct FetchBranchResult {
+        std::string branch;
+        ObjectId old_commit;
+        ObjectId new_commit;
+        bool is_new{false};
+        bool is_fast_forward{false};
+    };
+    struct FetchResult {
+        std::string remote;
+        std::vector<FetchBranchResult> updated_branches;
+        size_t objects_transferred{0};
+    };
+    FetchResult fetch_remote(const std::string& remote_name = "origin", const std::string& branch_name = "");
+
+    struct PushBranchResult {
+        std::string branch;
+        ObjectId old_commit;
+        ObjectId new_commit;
+        bool is_new{false};
+        bool is_fast_forward{false};
+        bool rejected{false};
+        std::string message;
+    };
+    struct PushResult {
+        std::string remote;
+        std::vector<PushBranchResult> results;
+        size_t objects_transferred{0};
+    };
+    PushResult push_remote(const std::string& remote_name = "origin", const std::string& branch_name = "", bool force = false);
+
+    struct PullResult {
+        FetchResult fetch_res;
+        MergeResult merge_res;
+    };
+    PullResult pull_remote(const std::string& remote_name = "origin", const std::string& branch_name = "");
+
+    // Clone
+    static Repository clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch = "");
+
+    // Bundles (.lgitpack)
+    struct BundleInfo {
+        std::map<std::string, ObjectId> references;
+        size_t object_count{0};
+    };
+    void create_bundle(const std::filesystem::path& bundle_path, const std::vector<std::string>& revs = {});
+    static BundleInfo verify_bundle(const std::filesystem::path& bundle_path);
+    BundleInfo unbundle(const std::filesystem::path& bundle_path);
+
+    // Worktrees
+    struct WorktreeInfo {
+        std::string name;
+        std::filesystem::path path;
+        std::string branch;
+        ObjectId commit_id;
+        bool is_main{false};
+        bool is_locked{false};
+    };
+    std::vector<WorktreeInfo> list_worktrees() const;
+    void add_worktree(const std::filesystem::path& worktree_path, const std::string& branch_name = "");
+    void remove_worktree(const std::filesystem::path& worktree_path, bool force = false);
+    size_t prune_worktrees();
+
 private:
     Repository(std::filesystem::path work_dir, std::filesystem::path git_dir, bool bare);
 

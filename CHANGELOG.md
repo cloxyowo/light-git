@@ -5,6 +5,35 @@ All notable changes to **light-git** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-16
+
+### Added
+- **Remote Synchronization (`lgit remote`, `lgit fetch`, `lgit push`, `lgit pull`)**:
+  - Remote tracking configuration (`remote add`, `remove`, `get-url`, `set-url`, `list` / `-v`).
+  - Remote tracking branch references (`refs/remotes/<remote>/<branch>`).
+  - Object and commit graph replication between repositories with SHA-256 verification.
+  - Fast-forward validation with BFS ancestry traversal.
+  - Support for `--force` flag on `lgit push`.
+  - Automatic fetch and 3-way merge integration on `lgit pull`.
+- **Repository Cloning (`lgit clone`)**:
+  - Clone repositories from filesystem directories or `.lgitpack` binary archives.
+  - Configurable branch selection with `-b <branch>`.
+  - Automatic working tree materialization, staging index initialization, and `origin` remote setup.
+- **Portable Binary Bundles (`lgit bundle` / `.lgitpack`)**:
+  - Zero-dependency portable binary archive format (`LGITPACK` v1) with trailer SHA-256 checksums.
+  - Air-gapped backup and repository transfer without network infrastructure.
+  - Subcommands: `create`, `verify`, `unbundle`, and `list-heads`.
+- **Multi-Working Tree Subsystem (`lgit worktree`)**:
+  - Linked working trees sharing common object store and references while maintaining isolated `HEAD` and staging indexes.
+  - Subcommands: `add <path> [<branch>]`, `list`, `remove <path> [--force]`, and `prune`.
+  - Automatic gitdir/commondir pointer management.
+- **Engine Hardening & Safe Revision Syntax**:
+  - Support for relative revision selectors: `HEAD~N`, `HEAD~`, and `HEAD^`.
+  - Strict error handling across GC reachability, tree decoding, and ref resolution.
+  - Stash commit preservation during garbage collection.
+- **Automated Integration Tests**:
+  - Comprehensive integration test cases for Remotes & Sync, Bundles & Clones, and Linked Worktrees.
+
 ## [0.2.0] - 2026-10-16
 
 ### Added
