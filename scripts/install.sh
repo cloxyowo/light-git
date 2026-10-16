@@ -7,8 +7,8 @@ PREFIX="${PREFIX:-$HOME/.local}"
 BINDIR="$PREFIX/bin"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "\033[1;35mlight-git (lgit) Unix Installer\033[0m"
-echo "==============================="
+printf "%b\n" "\033[1;35mlight-git (lgit) Unix Installer\033[0m"
+printf "%b\n" "==============================="
 
 SOURCE_EXE=""
 for candidate in \
@@ -23,11 +23,11 @@ for candidate in \
 done
 
 if [ -z "$SOURCE_EXE" ]; then
-    echo "\033[31merror: could not find 'lgit' binary. Please build first: cmake --build build --config Release\033[0m" >&2
+    printf "%b\n" "\033[31merror: could not find 'lgit' binary. Please build first: cmake --build build --config Release\033[0m" >&2
     exit 1
 fi
 
-echo "Installing lgit to $BINDIR..."
+printf "%b\n" "Installing lgit to $BINDIR..."
 mkdir -p "$BINDIR"
 cp "$SOURCE_EXE" "$BINDIR/lgit"
 chmod 755 "$BINDIR/lgit"
@@ -36,11 +36,11 @@ chmod 755 "$BINDIR/lgit"
 case ":$PATH:" in
     *":$BINDIR:"*) ;;
     *)
-        echo "\033[33mNotice: $BINDIR is not in your PATH.\033[0m"
-        echo "Add it by adding the following line to your ~/.bashrc or ~/.zshrc:"
-        echo "  export PATH=\"$BINDIR:\$PATH\""
+        printf "%b\n" "\033[33mNotice: $BINDIR is not in your PATH.\033[0m"
+        printf "%b\n" "Add it by adding the following line to your ~/.bashrc or ~/.zshrc:"
+        printf "%b\n" "  export PATH=\"$BINDIR:\$PATH\""
         ;;
 esac
 
-echo "\033[32mInstallation complete!\033[0m"
+printf "%b\n" "\033[32mInstallation complete!\033[0m"
 "$BINDIR/lgit" --version
