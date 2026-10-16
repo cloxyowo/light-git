@@ -152,37 +152,60 @@ lgit switch -c feature/login
 
 ---
 
-## Installation
+## Instant Installation (One-Liner)
+
+No need to clone or download the full repository. Install `lgit` with a single terminal command:
 
 ### Windows (PowerShell)
 
-Run the automated installer:
+Open PowerShell and run:
 
 ```powershell
-.\scripts\install.ps1
+irm https://raw.githubusercontent.com/cloxyowo/light-git/main/scripts/install.ps1 | iex
 ```
 
-Installs into `%LOCALAPPDATA%\Programs\light-git\bin` and configures your User `PATH`.
-
-To uninstall:
+*Or from your custom website/host:*
 ```powershell
-.\scripts\uninstall.ps1
+irm https://your-website.com/install.ps1 | iex
 ```
 
-### Linux & macOS (Shell)
+This downloads `lgit.exe`, places it in `%LOCALAPPDATA%\Programs\light-git\bin`, adds it to your User `PATH`, and verifies the installation.
+
+To uninstall at any time:
+```powershell
+& "$env:LOCALAPPDATA\Programs\light-git\uninstall.ps1"
+```
+
+### Linux & macOS (curl)
+
+Open your terminal and run:
 
 ```bash
-sh scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/cloxyowo/light-git/main/scripts/install.sh | sh
 ```
 
-Installs into `$HOME/.local/bin/lgit`.
+*Or from your custom website/host:*
+```bash
+curl -fsSL https://your-website.com/install.sh | sh
+```
+
+Installs `lgit` directly into `$HOME/.local/bin/lgit` and configures execution permissions.
 
 To uninstall:
 ```bash
-sh scripts/uninstall.sh
+sh ~/.local/uninstall-lgit.sh
 ```
 
-*See [docs/INSTALLATION.md](docs/INSTALLATION.md) for custom prefixes and options.*
+---
+
+## Local Installation (From Cloned Source)
+
+If you already have the repository cloned:
+
+- **Windows:** `.\scripts\install.ps1`
+- **Linux/macOS:** `sh scripts/install.sh`
+
+*See [docs/INSTALLATION.md](docs/INSTALLATION.md) for custom prefixes, self-hosting on your own domain, and manual build options.*
 
 ---
 

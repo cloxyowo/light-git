@@ -68,8 +68,12 @@ if ($currentPath) {
             Write-Log "[DryRun] Would remove '$targetBinDir' from $scope PATH." -Color Yellow
         } else {
             $newPath = $filteredEntries -join ';'
-            [Environment]::SetEnvironmentVariable("Path", $newPath, $scope)
-            Write-Log "Removed '$targetBinDir' from $scope PATH." -Color Green
+            try {
+                [Environment]::SetEnvironmentVariable("Path", $newPath, $scope)
+                Write-Log "Removed '$targetBinDir' from $scope PATH." -Color Green
+            } catch {
+                Write-Log "Warning: Could not update $scope PATH (elevation may be required): $_" -Color Yellow
+            }
         }
     } else {
         Write-Log "'$targetBinDir' not found in $scope PATH." -Color Gray
