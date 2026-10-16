@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: ${{ matrix.os }} (${{ matrix.config }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        config: [Release]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure CMake
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.config }}
+
+    - name: Run Tests (CTest)
+      run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+
+    - name: Test Unix Installer (Linux/macOS)
+      if: runner.os != 'Windows'
+      run: |
+        sh scripts/install.sh
+        ~/.local/bin/lgit --version
+        sh scripts/uninstall.sh
+
+    - name: Test Windows Installer (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        .\scripts\install.ps1 -Prefix "$env:LOCALAPPDATA\Programs\light-git-ci"
+        & "$env:LOCALAPPDATA\Programs\light-git-ci\bin\lgit.exe" --version
+        .\scripts\uninstall.ps1 -Prefix "$env:LOCALAPPDATA\Programs\light-git-ci"

@@ -1,0 +1,132 @@
+#pragma once
+
+#include "light_git/types.hpp"
+#include "light_git/object_store.hpp"
+#include "light_git/references.hpp"
+#include "light_git/index.hpp"
+#include "light_git/config.hpp"
+#include "light_git/ignore.hpp"
+#include "light_git/diff.hpp"
+#include "light_git/tree.hpp"
+#include "light_git/commit.hpp"
+#include <filesystem>
+#include <string>
+#include <vector>
+#include <memory>
+#include <optional>
+
+namespace light_git {
+
+enum class ResetMode {
+    Soft,
+    Mixed,
+    Hard
+};
+
+struct RepoStatus {
+    std::string branch_name;
+    bool is_detached{false};
+    ObjectId head_commit;
+
+    std::vector<std::string> staged_new;
+    std::vector<std::string> staged_modified;
+    std::vector<std::string> staged_deleted;
+
+    std::vector<std::string> unstaged_modified;
+    std::vector<std::string> unstaged_deleted;
+
+    std::vector<std::string> untracked;
+
+    [[nodiscard]] bool is_clean() const {
+        return staged_new.empty() && staged_modified.empty() && staged_deleted.empty() &&
+               unstaged_modified.empty() && unstaged_deleted.empty() && untracked.empty();
+    }
+};
+
+class Repository {
+public:
+    static Repository init(const std::filesystem::path& path, bool bare = false, const std::string& default_branch = "main");
+    static Repository open(const std::filesystem::path& start_path);
+    static std::optional<std::filesystem::path> find_repository_root(const std::filesystem::path& start_path);
+
+    const std::filesystem::path& work_dir() const { return work_dir_; }
+    const std::filesystem::path& git_dir() const { return git_dir_; }
+    bool is_bare() const { return is_bare_; }
+
+    ObjectStore& objects() { return *objects_; }
+    const ObjectStore& objects() const { return *objects_; }
+
+    References& refs() { return *refs_; }
+    const References& refs() const { return *refs_; }
+
+    Index& index() { return *index_; }
+    const Index& index() const { return *index_; }
+
+    RepoConfig& config() { return *config_; }
+    const RepoConfig& config() const { return *config_; }
+
+    IgnoreMatcher& ignores() { return ignores_; }
+    const IgnoreMatcher& ignores() const { return ignores_; }
+
+    // Status
+    RepoStatus compute_status();
+
+    // Staging
+    void stage_path(const std::string& rel_or_abs_path);
+    void stage_all();
+
+    // Commits
+    ObjectId create_commit(const std::string& message, bool amend = false);
+
+    // Branches & Switching
+    void switch_branch(const std::string& branch_name, bool create_new = false);
+    void create_branch(const std::string& branch_name, const ObjectId& start_point = ObjectId::zero());
+    void delete_branch(const std::string& branch_name, bool force = false);
+
+    // Restore & Reset
+    void restore_file(const std::string& rel_path, bool staged, const std::optional<ObjectId>& commit_id = std::nullopt);
+    void reset(const ObjectId& target_commit, ResetMode mode);
+
+    // Rm & Mv
+    void remove_path(const std::string& rel_path, bool cached_only = false);
+    void move_path(const std::string& src_path, const std::string& dest_path);
+
+    // Diffs
+    std::vector<FileDiff> diff_working_vs_index();
+    std::vector<FileDiff> diff_index_vs_head();
+    std::vector<FileDiff> diff_commit(const ObjectId& commit_id);
+
+    // Maintenance
+    struct GcResult {
+        size_t total_objects{0};
+        size_t kept_objects{0};
+        size_t removed_objects{0};
+    };
+    GcResult garbage_collect();
+
+    struct FsckIssue {
+        enum class Severity { Warning, Error } severity;
+        std::string message;
+    };
+    std::vector<FsckIssue> verify_integrity();
+
+    // Build tree hierarchy from index
+    ObjectId write_tree_from_index();
+
+private:
+    Repository(std::filesystem::path work_dir, std::filesystem::path git_dir, bool bare);
+
+    void load_ignores();
+
+    std::filesystem::path work_dir_;
+    std::filesystem::path git_dir_;
+    bool is_bare_{false};
+
+    std::unique_ptr<ObjectStore> objects_;
+    std::unique_ptr<References> refs_;
+    std::unique_ptr<Index> index_;
+    std::unique_ptr<RepoConfig> config_;
+    IgnoreMatcher ignores_;
+};
+
+} // namespace light_git

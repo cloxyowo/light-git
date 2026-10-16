@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-release",
+      "displayName": "Windows MSVC Release",
+      "description": "Optimized release build for Windows with MSVC",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "description": "Optimized release build for Linux with GCC/Clang",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-release",
+      "configuration": "Release"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-all",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    }
+  ]
+}
