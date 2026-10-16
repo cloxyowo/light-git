@@ -2,8 +2,12 @@
 #include "light_git/filesystem.hpp"
 #include "light_git/crypto.hpp"
 #include <fstream>
+#include <sstream>
+#include <iostream>
 #include <stdexcept>
 #include <unordered_set>
+#include <set>
+#include <queue>
 #include <map>
 #include <algorithm>
 
@@ -583,6 +587,13 @@ void Repository::reset(const ObjectId& target_commit, ResetMode mode) {
     auto tree_files = Tree::flatten_tree(*objects_, commit.tree_id);
 
     if (mode == ResetMode::Hard && !is_bare_) {
+        // Remove files that were tracked in index but do not exist in target tree
+        for (const auto& [path, ie] : index_->entries()) {
+            if (tree_files.find(path) == tree_files.end()) {
+                std::error_code ec;
+                std::filesystem::remove(work_dir_ / path, ec);
+            }
+        }
         // Overwrite working directory files with target tree
         for (const auto& [path, te] : tree_files) {
             RawObject bobj = objects_->read_object(te.id);
@@ -879,6 +890,626 @@ std::vector<Repository::FsckIssue> Repository::verify_integrity() {
     }
 
     return issues;
+}
+
+std::optional<ObjectId> Repository::resolve_revision(const std::string& rev) const {
+    if (rev.empty()) return std::nullopt;
+    if (rev == "HEAD") {
+        ObjectId head_id = refs_->resolve_head();
+        if (head_id) return head_id;
+        return std::nullopt;
+    }
+    if (refs_->branch_exists(rev)) {
+        return refs_->get_branch_commit(rev);
+    }
+    if (auto tag_id = refs_->get_tag(rev)) {
+        return tag_id;
+    }
+    if (rev.size() == 64) {
+        try {
+            ObjectId id = ObjectId::from_hex(rev);
+            if (objects_->has_object(id)) return id;
+        } catch (...) {}
+    }
+    if (rev.size() >= 4 && rev.size() < 64) {
+        return objects_->resolve_prefix(rev);
+    }
+    return std::nullopt;
+}
+
+void Repository::create_tag(const std::string& name, const ObjectId& target, const std::string& message) {
+    (void)message;
+    if (name.empty()) {
+        throw std::runtime_error("Tag name cannot be empty");
+    }
+    if (refs_->get_tag(name)) {
+        throw std::runtime_error("Tag '" + name + "' already exists");
+    }
+    ObjectId target_id = target ? target : refs_->resolve_head();
+    if (!target_id) {
+        throw std::runtime_error("Cannot create tag '" + name + "': repository has no commits");
+    }
+    refs_->set_tag(name, target_id);
+}
+
+void Repository::delete_tag(const std::string& name) {
+    if (!refs_->get_tag(name)) {
+        throw std::runtime_error("Tag '" + name + "' not found");
+    }
+    if (!refs_->delete_tag(name)) {
+        throw std::runtime_error("Failed to delete tag '" + name + "'");
+    }
+}
+
+std::vector<std::string> Repository::list_tags() const {
+    return refs_->list_tags();
+}
+
+std::vector<Repository::StashEntry> Repository::list_stashes() const {
+    std::vector<StashEntry> result;
+    std::filesystem::path stack_file = git_dir_ / "stash_stack";
+    if (!std::filesystem::exists(stack_file)) {
+        return result;
+    }
+    std::ifstream ifs(stack_file);
+    std::string line;
+    size_t idx = 0;
+    while (std::getline(ifs, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        size_t p1 = line.find('|');
+        size_t p2 = (p1 != std::string::npos) ? line.find('|', p1 + 1) : std::string::npos;
+        size_t p3 = (p2 != std::string::npos) ? line.find('|', p2 + 1) : std::string::npos;
+        if (p1 != std::string::npos && p2 != std::string::npos && p3 != std::string::npos) {
+            try {
+                StashEntry se;
+                se.index = idx++;
+                se.commit_id = ObjectId::from_hex(line.substr(0, p1));
+                se.timestamp = std::stoll(line.substr(p1 + 1, p2 - p1 - 1));
+                se.branch = line.substr(p2 + 1, p3 - p2 - 1);
+                se.message = line.substr(p3 + 1);
+                result.push_back(std::move(se));
+            } catch (...) {}
+        }
+    }
+    return result;
+}
+
+ObjectId Repository::stash_push(const std::string& message) {
+    RepoStatus status = compute_status();
+    if (status.is_clean()) {
+        throw std::runtime_error("No local changes to save");
+    }
+    ObjectId head_id = refs_->resolve_head();
+    if (!head_id) {
+        throw std::runtime_error("Cannot stash on an empty repository");
+    }
+
+    std::string branch = refs_->get_current_branch();
+    if (branch.empty()) branch = "detached";
+
+    stage_all();
+    ObjectId stash_tree = write_tree_from_index();
+
+    std::string user_name = config_->get_or("user.name", "User");
+    std::string user_email = config_->get_or("user.email", "user@localhost");
+
+    Commit sc;
+    sc.tree_id = stash_tree;
+    sc.parents = { head_id };
+    sc.author = CommitIdentity::now(user_name, user_email);
+    sc.committer = sc.author;
+    std::string full_msg = message.empty() ? ("WIP on " + branch + ": " + head_id.to_short_hex()) : message;
+    sc.message = full_msg;
+
+    ObjectId stash_commit_id = objects_->write_object(ObjectType::Commit, sc.serialize());
+
+    std::filesystem::path stack_file = git_dir_ / "stash_stack";
+    std::string existing;
+    if (std::filesystem::exists(stack_file)) {
+        existing = fs_util::read_file_string(stack_file);
+    }
+    std::string new_entry = stash_commit_id.to_hex() + "|" + std::to_string(sc.author.timestamp) + "|" + branch + "|" + full_msg + "\n";
+    fs_util::atomic_write_file(stack_file, new_entry + existing);
+
+    reset(head_id, ResetMode::Hard);
+    return stash_commit_id;
+}
+
+void Repository::stash_apply(size_t index) {
+    auto stashes = list_stashes();
+    if (index >= stashes.size()) {
+        throw std::runtime_error("stash@{" + std::to_string(index) + "} is not a valid stash reference");
+    }
+    const auto& entry = stashes[index];
+    RawObject cobj = objects_->read_object(entry.commit_id);
+    Commit sc = Commit::deserialize(cobj.data);
+    auto stash_files = Tree::flatten_tree(*objects_, sc.tree_id);
+
+    for (const auto& [path, te] : stash_files) {
+        RawObject bobj = objects_->read_object(te.id);
+        std::filesystem::path full_p = work_dir_ / path;
+        fs_util::write_file_bytes(full_p, bobj.data.data(), bobj.data.size());
+        fs_util::set_file_mode(full_p, te.mode);
+
+        IndexEntry ie;
+        ie.path = path;
+        ie.id = te.id;
+        ie.mode = te.mode;
+        ie.size = bobj.data.size();
+        ie.mtime_ms = fs_util::get_mtime_ms(full_p);
+        index_->add_or_update(std::move(ie));
+    }
+    index_->save_to_file(git_dir_ / "index");
+}
+
+void Repository::stash_drop(size_t index) {
+    auto stashes = list_stashes();
+    if (index >= stashes.size()) {
+        throw std::runtime_error("stash@{" + std::to_string(index) + "} is not a valid stash reference");
+    }
+    stashes.erase(stashes.begin() + index);
+
+    std::filesystem::path stack_file = git_dir_ / "stash_stack";
+    if (stashes.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(stack_file, ec);
+    } else {
+        std::string content;
+        for (const auto& s : stashes) {
+            content += s.commit_id.to_hex() + "|" + std::to_string(s.timestamp) + "|" + s.branch + "|" + s.message + "\n";
+        }
+        fs_util::atomic_write_file(stack_file, content);
+    }
+}
+
+void Repository::stash_pop(size_t index) {
+    stash_apply(index);
+    stash_drop(index);
+}
+
+void Repository::stash_clear() {
+    std::filesystem::path stack_file = git_dir_ / "stash_stack";
+    std::error_code ec;
+    std::filesystem::remove(stack_file, ec);
+}
+
+static std::pair<std::string, bool> merge_text_content(
+    const std::string& base_text,
+    const std::string& head_text,
+    const std::string& target_text,
+    const std::string& target_label) {
+    if (head_text == base_text) {
+        return {target_text, false};
+    }
+    if (target_text == base_text) {
+        return {head_text, false};
+    }
+    if (head_text == target_text) {
+        return {head_text, false};
+    }
+
+    std::ostringstream ss;
+    ss << "<<<<<<< HEAD\n";
+    ss << head_text;
+    if (!head_text.empty() && head_text.back() != '\n') ss << "\n";
+    ss << "=======\n";
+    ss << target_text;
+    if (!target_text.empty() && target_text.back() != '\n') ss << "\n";
+    ss << ">>>>>>> " << target_label << "\n";
+
+    return {ss.str(), true};
+}
+
+Repository::MergeResult Repository::merge(const std::string& branch_or_commit) {
+    auto target_opt = resolve_revision(branch_or_commit);
+    if (!target_opt) {
+        throw std::runtime_error("Branch or revision '" + branch_or_commit + "' not found");
+    }
+    ObjectId target_id = *target_opt;
+    ObjectId head_id = refs_->resolve_head();
+    if (!head_id) {
+        throw std::runtime_error("Cannot merge: HEAD points to unborn branch");
+    }
+
+    if (target_id == head_id) {
+        MergeResult r;
+        r.already_up_to_date = true;
+        r.commit_id = head_id;
+        r.message = "Already up to date.";
+        return r;
+    }
+
+    std::unordered_set<ObjectId> head_ancestors;
+    std::queue<ObjectId> q1;
+    q1.push(head_id);
+    head_ancestors.insert(head_id);
+    while (!q1.empty()) {
+        ObjectId c = q1.front();
+        q1.pop();
+        if (!objects_->has_object(c)) continue;
+        RawObject ro = objects_->read_object(c);
+        if (ro.type != ObjectType::Commit) continue;
+        Commit com = Commit::deserialize(ro.data);
+        for (const auto& p : com.parents) {
+            if (head_ancestors.insert(p).second) {
+                q1.push(p);
+            }
+        }
+    }
+
+    ObjectId merge_base = ObjectId::zero();
+    std::queue<ObjectId> q2;
+    std::unordered_set<ObjectId> visited2;
+    q2.push(target_id);
+    visited2.insert(target_id);
+    while (!q2.empty()) {
+        ObjectId c = q2.front();
+        q2.pop();
+        if (head_ancestors.count(c)) {
+            merge_base = c;
+            break;
+        }
+        if (!objects_->has_object(c)) continue;
+        RawObject ro = objects_->read_object(c);
+        if (ro.type != ObjectType::Commit) continue;
+        Commit com = Commit::deserialize(ro.data);
+        for (const auto& p : com.parents) {
+            if (visited2.insert(p).second) {
+                q2.push(p);
+            }
+        }
+    }
+
+    if (merge_base == target_id) {
+        MergeResult r;
+        r.already_up_to_date = true;
+        r.commit_id = head_id;
+        r.message = "Already up to date.";
+        return r;
+    }
+
+    if (merge_base == head_id) {
+        reset(target_id, ResetMode::Hard);
+        MergeResult r;
+        r.is_fast_forward = true;
+        r.commit_id = target_id;
+        r.message = "Fast-forward";
+        return r;
+    }
+
+    RepoStatus st = compute_status();
+    if (!st.staged_new.empty() || !st.staged_modified.empty() || !st.staged_deleted.empty() ||
+        !st.unstaged_modified.empty() || !st.unstaged_deleted.empty()) {
+        throw std::runtime_error("Your local changes would be overwritten by merge. Please commit or stash your changes first.");
+    }
+
+    std::map<std::string, TreeEntry> base_files;
+    if (merge_base) {
+        Commit bc = Commit::deserialize(objects_->read_object(merge_base).data);
+        base_files = Tree::flatten_tree(*objects_, bc.tree_id);
+    }
+    Commit hc = Commit::deserialize(objects_->read_object(head_id).data);
+    auto head_files = Tree::flatten_tree(*objects_, hc.tree_id);
+    Commit tc = Commit::deserialize(objects_->read_object(target_id).data);
+    auto target_files = Tree::flatten_tree(*objects_, tc.tree_id);
+
+    std::set<std::string> all_paths;
+    for (const auto& [p, _] : base_files) all_paths.insert(p);
+    for (const auto& [p, _] : head_files) all_paths.insert(p);
+    for (const auto& [p, _] : target_files) all_paths.insert(p);
+
+    MergeResult result;
+    for (const auto& path : all_paths) {
+        auto it_b = base_files.find(path);
+        auto it_h = head_files.find(path);
+        auto it_t = target_files.find(path);
+
+        bool in_b = (it_b != base_files.end());
+        bool in_h = (it_h != head_files.end());
+        bool in_t = (it_t != target_files.end());
+
+        if (in_h && in_t) {
+            if (it_h->second.id == it_t->second.id) {
+                continue;
+            }
+            if (in_b && it_h->second.id == it_b->second.id) {
+                RawObject to = objects_->read_object(it_t->second.id);
+                std::filesystem::path fp = work_dir_ / path;
+                fs_util::write_file_bytes(fp, to.data.data(), to.data.size());
+                fs_util::set_file_mode(fp, it_t->second.mode);
+                IndexEntry ie;
+                ie.path = path;
+                ie.id = it_t->second.id;
+                ie.mode = it_t->second.mode;
+                ie.size = to.data.size();
+                ie.mtime_ms = fs_util::get_mtime_ms(fp);
+                index_->add_or_update(std::move(ie));
+                result.merged_files.push_back(path);
+            } else if (in_b && it_t->second.id == it_b->second.id) {
+                continue;
+            } else {
+                std::string b_txt = in_b ? fs_util::read_file_string(work_dir_ / path) : "";
+                if (in_b) {
+                    RawObject bo = objects_->read_object(it_b->second.id);
+                    b_txt = std::string(bo.data.begin(), bo.data.end());
+                }
+                RawObject ho = objects_->read_object(it_h->second.id);
+                std::string h_txt(ho.data.begin(), ho.data.end());
+                RawObject to = objects_->read_object(it_t->second.id);
+                std::string t_txt(to.data.begin(), to.data.end());
+
+                auto [m_txt, conflict] = merge_text_content(b_txt, h_txt, t_txt, branch_or_commit);
+                std::filesystem::path fp = work_dir_ / path;
+                fs_util::atomic_write_file(fp, m_txt);
+                ObjectId new_blob = objects_->write_object(ObjectType::Blob, std::vector<uint8_t>(m_txt.begin(), m_txt.end()));
+
+                IndexEntry ie;
+                ie.path = path;
+                ie.id = new_blob;
+                ie.mode = it_h->second.mode;
+                ie.size = m_txt.size();
+                ie.mtime_ms = fs_util::get_mtime_ms(fp);
+                index_->add_or_update(std::move(ie));
+
+                if (conflict) {
+                    result.has_conflicts = true;
+                    result.conflict_files.push_back(path);
+                } else {
+                    result.merged_files.push_back(path);
+                }
+            }
+        } else if (in_t && !in_h) {
+            if (in_b && it_t->second.id == it_b->second.id) {
+                // Deleted in HEAD, unmodified in target
+            } else if (!in_b) {
+                RawObject to = objects_->read_object(it_t->second.id);
+                std::filesystem::path fp = work_dir_ / path;
+                fs_util::write_file_bytes(fp, to.data.data(), to.data.size());
+                fs_util::set_file_mode(fp, it_t->second.mode);
+                IndexEntry ie;
+                ie.path = path;
+                ie.id = it_t->second.id;
+                ie.mode = it_t->second.mode;
+                ie.size = to.data.size();
+                ie.mtime_ms = fs_util::get_mtime_ms(fp);
+                index_->add_or_update(std::move(ie));
+                result.merged_files.push_back(path);
+            } else {
+                result.has_conflicts = true;
+                result.conflict_files.push_back(path);
+            }
+        } else if (in_h && !in_t) {
+            if (in_b && it_h->second.id == it_b->second.id) {
+                std::error_code ec;
+                std::filesystem::remove(work_dir_ / path, ec);
+                index_->remove(path);
+                result.merged_files.push_back(path);
+            } else if (!in_b) {
+                // Kept in HEAD
+            } else {
+                result.has_conflicts = true;
+                result.conflict_files.push_back(path);
+            }
+        }
+    }
+
+    index_->save_to_file(git_dir_ / "index");
+
+    if (result.has_conflicts) {
+        fs_util::atomic_write_file(git_dir_ / "MERGE_HEAD", target_id.to_hex() + "\n");
+        result.message = "Automatic merge failed; fix conflicts and then commit the result.";
+        return result;
+    }
+
+    std::string user_name = config_->get_or("user.name", "User");
+    std::string user_email = config_->get_or("user.email", "user@localhost");
+
+    Commit mc;
+    mc.tree_id = write_tree_from_index();
+    mc.parents = { head_id, target_id };
+    mc.author = CommitIdentity::now(user_name, user_email);
+    mc.committer = mc.author;
+    mc.message = "Merge branch '" + branch_or_commit + "'";
+
+    ObjectId merge_cid = objects_->write_object(ObjectType::Commit, mc.serialize());
+    if (refs_->is_head_detached()) {
+        refs_->set_head_detached(merge_cid);
+    } else {
+        refs_->set_branch_commit(refs_->get_current_branch(), merge_cid);
+    }
+
+    std::error_code ec;
+    std::filesystem::remove(git_dir_ / "MERGE_HEAD", ec);
+
+    result.commit_id = merge_cid;
+    result.message = "Merge made by the 'three-way' strategy.";
+    return result;
+}
+
+ObjectId Repository::cherry_pick(const ObjectId& commit_id) {
+    if (!objects_->has_object(commit_id)) {
+        throw std::runtime_error("Commit " + commit_id.to_short_hex() + " not found");
+    }
+    RawObject cobj = objects_->read_object(commit_id);
+    if (cobj.type != ObjectType::Commit) {
+        throw std::runtime_error("Object " + commit_id.to_short_hex() + " is not a commit");
+    }
+    Commit target_c = Commit::deserialize(cobj.data);
+
+    ObjectId head_id = refs_->resolve_head();
+    if (!head_id) {
+        throw std::runtime_error("Cannot cherry-pick on an empty repository");
+    }
+
+    auto target_files = Tree::flatten_tree(*objects_, target_c.tree_id);
+    std::map<std::string, TreeEntry> parent_files;
+    if (!target_c.parents.empty()) {
+        Commit pc = Commit::deserialize(objects_->read_object(target_c.parents[0]).data);
+        parent_files = Tree::flatten_tree(*objects_, pc.tree_id);
+    }
+
+    for (const auto& [path, te] : target_files) {
+        auto it = parent_files.find(path);
+        if (it == parent_files.end() || it->second.id != te.id) {
+            RawObject bobj = objects_->read_object(te.id);
+            std::filesystem::path fp = work_dir_ / path;
+            fs_util::write_file_bytes(fp, bobj.data.data(), bobj.data.size());
+            fs_util::set_file_mode(fp, te.mode);
+
+            IndexEntry ie;
+            ie.path = path;
+            ie.id = te.id;
+            ie.mode = te.mode;
+            ie.size = bobj.data.size();
+            ie.mtime_ms = fs_util::get_mtime_ms(fp);
+            index_->add_or_update(std::move(ie));
+        }
+    }
+    for (const auto& [path, te] : parent_files) {
+        if (target_files.find(path) == target_files.end()) {
+            std::error_code ec;
+            std::filesystem::remove(work_dir_ / path, ec);
+            index_->remove(path);
+        }
+    }
+
+    index_->save_to_file(git_dir_ / "index");
+
+    std::string user_name = config_->get_or("user.name", "User");
+    std::string user_email = config_->get_or("user.email", "user@localhost");
+
+    Commit new_c;
+    new_c.tree_id = write_tree_from_index();
+    new_c.parents = { head_id };
+    new_c.author = target_c.author;
+    new_c.committer = CommitIdentity::now(user_name, user_email);
+    new_c.message = target_c.message;
+
+    ObjectId new_id = objects_->write_object(ObjectType::Commit, new_c.serialize());
+    if (refs_->is_head_detached()) {
+        refs_->set_head_detached(new_id);
+    } else {
+        refs_->set_branch_commit(refs_->get_current_branch(), new_id);
+    }
+
+    return new_id;
+}
+
+std::string Repository::export_git_fastimport() const {
+    std::ostringstream ss;
+
+    std::vector<std::string> branches = refs_->list_branches();
+    std::vector<ObjectId> tip_commits;
+    for (const auto& b : branches) {
+        if (auto cid = refs_->get_branch_commit(b)) {
+            tip_commits.push_back(*cid);
+        }
+    }
+    if (refs_->is_head_detached()) {
+        if (auto hid = refs_->resolve_head()) {
+            tip_commits.push_back(hid);
+        }
+    }
+
+    std::unordered_set<ObjectId> visited;
+    std::vector<ObjectId> topo_order;
+    std::function<void(const ObjectId&)> dfs = [&](const ObjectId& id) {
+        if (!visited.insert(id).second) return;
+        if (!objects_->has_object(id)) return;
+        RawObject obj = objects_->read_object(id);
+        if (obj.type != ObjectType::Commit) return;
+        Commit c = Commit::deserialize(obj.data);
+        for (const auto& p : c.parents) {
+            dfs(p);
+        }
+        topo_order.push_back(id);
+    };
+
+    for (const auto& tip : tip_commits) {
+        dfs(tip);
+    }
+
+    std::unordered_map<ObjectId, size_t> mark_map;
+    size_t mark = 1;
+    for (const auto& cid : topo_order) {
+        mark_map[cid] = mark++;
+    }
+
+    std::string cur_branch = refs_->get_current_branch();
+    if (cur_branch.empty()) cur_branch = "main";
+
+    for (const auto& cid : topo_order) {
+        Commit c = Commit::deserialize(objects_->read_object(cid).data);
+        size_t my_mark = mark_map[cid];
+
+        ss << "commit refs/heads/" << cur_branch << "\n";
+        ss << "mark :" << my_mark << "\n";
+        ss << "author " << c.author.format() << "\n";
+        ss << "committer " << c.committer.format() << "\n";
+        ss << "data " << c.message.size() << "\n";
+        ss << c.message << "\n";
+
+        if (!c.parents.empty()) {
+            auto it = mark_map.find(c.parents[0]);
+            if (it != mark_map.end()) {
+                ss << "from :" << it->second << "\n";
+            }
+            for (size_t i = 1; i < c.parents.size(); ++i) {
+                auto it2 = mark_map.find(c.parents[i]);
+                if (it2 != mark_map.end()) {
+                    ss << "merge :" << it2->second << "\n";
+                }
+            }
+        }
+
+        auto files = Tree::flatten_tree(*objects_, c.tree_id);
+        for (const auto& [path, te] : files) {
+            RawObject bobj = objects_->read_object(te.id);
+            ss << "M " << std::oct << te.mode << std::dec << " inline " << path << "\n";
+            ss << "data " << bobj.data.size() << "\n";
+            ss.write(reinterpret_cast<const char*>(bobj.data.data()), bobj.data.size());
+            ss << "\n";
+        }
+    }
+
+    for (const auto& tag_name : refs_->list_tags()) {
+        if (auto tid = refs_->get_tag(tag_name)) {
+            auto it = mark_map.find(*tid);
+            if (it != mark_map.end()) {
+                ss << "tag " << tag_name << "\n";
+                ss << "from :" << it->second << "\n";
+                ss << "data 0\n";
+            }
+        }
+    }
+
+    return ss.str();
+}
+
+void Repository::export_to_git(const std::filesystem::path& target_git_dir) {
+    std::filesystem::create_directories(target_git_dir);
+    std::filesystem::path fi_path = target_git_dir / "light-git-export.fi";
+    std::string fi_content = export_git_fastimport();
+    fs_util::atomic_write_file(fi_path, fi_content);
+
+    std::string check_cmd =
+#if defined(_WIN32)
+        "git --version > nul 2>&1";
+#else
+        "git --version > /dev/null 2>&1";
+#endif
+
+    if (std::system(check_cmd.c_str()) == 0) {
+        std::string init_cmd = "git -C \"" + target_git_dir.string() + "\" init";
+        std::system(init_cmd.c_str());
+
+        std::string import_cmd = "git -C \"" + target_git_dir.string() + "\" fast-import < \"" + fi_path.string() + "\"";
+        std::system(import_cmd.c_str());
+
+        std::string checkout_cmd = "git -C \"" + target_git_dir.string() + "\" checkout -f main";
+        std::system(checkout_cmd.c_str());
+    }
 }
 
 } // namespace light_git

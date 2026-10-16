@@ -212,6 +212,139 @@ TEST(Integration_FsckAndGarbageCollection) {
     ASSERT_TRUE(!corrupt_issues.empty());
 }
 
+TEST(Integration_TaggingWorkflow) {
+    Sandbox sb("tagging");
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("version.txt", "1.0.0");
+    repo.stage_all();
+    ObjectId c1 = repo.create_commit("Release 1.0.0");
+
+    repo.create_tag("v1.0.0", c1);
+    auto tags = repo.list_tags();
+    ASSERT_EQ(tags.size(), 1);
+    ASSERT_EQ(tags[0], "v1.0.0");
+
+    auto resolved = repo.resolve_revision("v1.0.0");
+    ASSERT_TRUE(resolved.has_value());
+    ASSERT_EQ(*resolved, c1);
+
+    repo.delete_tag("v1.0.0");
+    ASSERT_EQ(repo.list_tags().size(), 0);
+}
+
+TEST(Integration_StashWorkflow) {
+    Sandbox sb("stash");
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("work.txt", "Original text\n");
+    repo.stage_all();
+    repo.create_commit("Base commit");
+
+    // Dirty working directory
+    sb.write_file("work.txt", "Modified text\n");
+    sb.write_file("new_staged.txt", "new staged\n");
+    repo.stage_path("new_staged.txt");
+
+    RepoStatus s_dirty = repo.compute_status();
+    ASSERT_FALSE(s_dirty.is_clean());
+
+    ObjectId stash_id = repo.stash_push("WIP on work");
+    ASSERT_TRUE(stash_id);
+
+    RepoStatus s_clean = repo.compute_status();
+    ASSERT_TRUE(s_clean.is_clean());
+    ASSERT_EQ(sb.read_file("work.txt"), "Original text\n");
+    ASSERT_FALSE(std::filesystem::exists(sb.path / "new_staged.txt"));
+
+    auto stashes = repo.list_stashes();
+    ASSERT_EQ(stashes.size(), 1);
+    ASSERT_EQ(stashes[0].message, "WIP on work");
+
+    // Pop stash
+    repo.stash_pop(0);
+    ASSERT_EQ(sb.read_file("work.txt"), "Modified text\n");
+    ASSERT_TRUE(std::filesystem::exists(sb.path / "new_staged.txt"));
+    ASSERT_EQ(sb.read_file("new_staged.txt"), "new staged\n");
+    ASSERT_EQ(repo.list_stashes().size(), 0);
+}
+
+TEST(Integration_MergeWorkflow) {
+    Sandbox sb("merge");
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("base.txt", "Base content\n");
+    repo.stage_all();
+    repo.create_commit("Initial commit");
+
+    // Create feature branch
+    repo.create_branch("feature");
+    repo.switch_branch("feature");
+    sb.write_file("feature.txt", "Feature content\n");
+    repo.stage_all();
+    repo.create_commit("Feature commit");
+
+    // Switch back to main and make another commit
+    repo.switch_branch("main");
+    sb.write_file("main_only.txt", "Main branch content\n");
+    repo.stage_all();
+    repo.create_commit("Main commit");
+
+    // Merge feature into main
+    auto mres = repo.merge("feature");
+    ASSERT_FALSE(mres.has_conflicts);
+    ASSERT_TRUE(mres.commit_id);
+
+    // Both files should now exist
+    ASSERT_TRUE(std::filesystem::exists(sb.path / "feature.txt"));
+    ASSERT_TRUE(std::filesystem::exists(sb.path / "main_only.txt"));
+
+    // Verify merge commit has 2 parents
+    RawObject cobj = repo.objects().read_object(mres.commit_id);
+    Commit mc = Commit::deserialize(cobj.data);
+    ASSERT_EQ(mc.parents.size(), 2);
+}
+
+TEST(Integration_CherryPickAndExportGit) {
+    Sandbox sb("cherry_export");
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("app.txt", "Version 1\n");
+    repo.stage_all();
+    repo.create_commit("Initial app");
+
+    // Create a feature branch with a cherry-pickable commit
+    repo.create_branch("hotfix");
+    repo.switch_branch("hotfix");
+    sb.write_file("patch.txt", "Security patch applied\n");
+    repo.stage_all();
+    ObjectId fix_cid = repo.create_commit("Apply security patch");
+
+    // Switch back to main
+    repo.switch_branch("main");
+    ASSERT_FALSE(std::filesystem::exists(sb.path / "patch.txt"));
+
+    // Cherry pick
+    ObjectId new_cid = repo.cherry_pick(fix_cid);
+    ASSERT_TRUE(new_cid);
+    ASSERT_TRUE(std::filesystem::exists(sb.path / "patch.txt"));
+    ASSERT_EQ(sb.read_file("patch.txt"), "Security patch applied\n");
+
+    // Test Git fast-import exporter
+    std::string fastimport = repo.export_git_fastimport();
+    ASSERT_TRUE(fastimport.find("commit refs/heads/main") != std::string::npos);
+    ASSERT_TRUE(fastimport.find("patch.txt") != std::string::npos);
+    ASSERT_TRUE(fastimport.find("Security patch applied") != std::string::npos);
+}
+
 int main() {
     return test_framework::run_all_tests();
 }

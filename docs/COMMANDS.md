@@ -269,18 +269,89 @@ lgit fsck
 
 ---
 
+### `lgit tag`
+
+Create, list, or delete tag references pointing to commits.
+
+**Usage:**
+```bash
+lgit tag                        # List all tags in alphabetical order
+lgit tag <name>                 # Create tag at current HEAD
+lgit tag <name> <commit>        # Create tag at specific commit
+lgit tag -d <name>              # Delete a tag
+```
+
+---
+
+### `lgit stash`
+
+Save dirty working tree and staging area changes away to a stash stack, resetting to clean HEAD.
+
+**Usage:**
+```bash
+lgit stash                      # Save dirty changes
+lgit stash push -m "message"    # Save dirty changes with description
+lgit stash list                 # List all stashed entries
+lgit stash pop [index]          # Apply and remove stash (default stash@{0})
+lgit stash apply [index]        # Apply without removing from stack
+lgit stash drop [index]         # Drop a specific stash entry
+lgit stash clear                # Clear all stashed states
+```
+
+---
+
+### `lgit merge`
+
+Join two branches together using fast-forward or three-way merge with conflict marker generation.
+
+**Usage:**
+```bash
+lgit merge <branch>
+```
+
+**Behavior:**
+- **Fast-forward:** If current branch tip is an ancestor of target, updates branch pointer directly.
+- **Three-way merge:** Locates common merge base, reconciles clean file additions/deletions/edits, and automatically generates merge commit.
+- **Conflict Handling:** If lines conflict, writes `<<<<<<< HEAD` / `=======` / `>>>>>>>` markers into affected files and sets `.light-git/MERGE_HEAD`.
+
+---
+
+### `lgit cherry-pick`
+
+Apply the changes introduced by an existing commit onto the current branch tip.
+
+**Usage:**
+```bash
+lgit cherry-pick <commit-hash>
+```
+
+---
+
+### `lgit export-git`
+
+Export `.light-git` history into standard Git fast-import stream format or initialize a `.git` repository.
+
+**Usage:**
+```bash
+lgit export-git                           # Exports and initializes Git repo in ./export_git
+lgit export-git --target ./my-git-repo     # Exports to specified target directory
+lgit export-git --output history.fi       # Exports raw Git fast-import stream file
+```
+
+---
+
 ## Planned / Roadmap Commands
 
-The following commands are part of the light-git future roadmap and print informative status messages:
+The following commands are registered on the light-git future roadmap:
 
 - `lgit clone`: Clone remote or local repository into a new directory.
 - `lgit fetch`: Download remote objects and references.
 - `lgit pull`: Fetch and integrate remote history.
 - `lgit push`: Update remote references with local objects.
 - `lgit remote`: Manage tracked remote repositories.
-- `lgit merge`: Join two development histories together.
-- `lgit stash`: Save and restore dirty working directory state.
-- `lgit tag`: Create, list, or verify cryptographic tag objects.
-- `lgit cherry-pick`: Apply changes introduced by existing commits.
-- `lgit rebase`: Reapply commits on top of another base tip.
+- `lgit rebase`: Reapply commits on top of another base tip (`-i` interactive rebase).
 - `lgit worktree`: Manage multiple working trees connected to one repository.
+- `lgit ui`: Embedded local web dashboard and visual commit graph viewer.
+- `lgit sign`: Cryptographic commit and tag signing via Ed25519.
+- `lgit bundle`: Package repository objects into portable `.lgitpack` archives.
+- `lgit daemon`: Peer-to-peer and LAN repository discovery and sync daemon.

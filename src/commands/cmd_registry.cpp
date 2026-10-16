@@ -7,7 +7,7 @@ namespace commands {
 
 int cmd_version(const CommandContext& ctx) {
     (void)ctx;
-    term::Terminal::print_banner("0.1.0");
+    term::Terminal::print_banner("0.2.0");
     std::cout << "built with C++17 for high-performance minimal footprint\n";
 #if defined(_WIN32)
     std::cout << "platform: Windows (MSVC)\n";
@@ -176,19 +176,59 @@ void register_all_commands(CliDispatcher& d) {
         true
     });
 
-    // Later-stage roadmap commands
+    d.register_command({
+        "tag",
+        "Create, list, or delete tag references",
+        "lgit tag [<name>] [<commit>] [-d <name>] [-a <name> -m <msg>]",
+        cmd_tag,
+        true
+    });
+
+    d.register_command({
+        "stash",
+        "Stash changes in a dirty working directory and restore them",
+        "lgit stash [push [-m <msg>]] | lgit stash list | lgit stash pop | lgit stash apply | lgit stash drop | lgit stash clear",
+        cmd_stash,
+        true
+    });
+
+    d.register_command({
+        "merge",
+        "Join two or more development histories together",
+        "lgit merge <branch>",
+        cmd_merge,
+        true
+    });
+
+    d.register_command({
+        "cherry-pick",
+        "Apply the changes introduced by an existing commit",
+        "lgit cherry-pick <commit>",
+        cmd_cherry_pick,
+        true
+    });
+
+    d.register_command({
+        "export-git",
+        "Export light-git repository to standard Git fast-import format",
+        "lgit export-git [--target <dir>] [--output <file.fi>]",
+        cmd_export_git,
+        true
+    });
+
+    // Next-generation roadmap commands
     const std::vector<std::pair<std::string, std::string>> future_cmds = {
         {"clone", "Clone a repository into a new directory"},
         {"fetch", "Download objects and refs from another repository"},
         {"pull", "Fetch from and integrate with another repository"},
         {"push", "Update remote refs along with associated objects"},
         {"remote", "Manage set of tracked repositories"},
-        {"merge", "Join two or more development histories together"},
-        {"stash", "Stash the changes in a dirty working directory away"},
-        {"tag", "Create, list, delete or verify a tag object"},
-        {"cherry-pick", "Apply the changes introduced by some existing commits"},
         {"rebase", "Reapply commits on top of another base tip"},
-        {"worktree", "Manage multiple working trees attached to same repository"}
+        {"worktree", "Manage multiple working trees attached to same repository"},
+        {"ui", "Launch embedded web dashboard and visual commit graph viewer"},
+        {"sign", "Sign commits and tags with cryptographic Ed25519 keys"},
+        {"bundle", "Package repository objects into portable .lgitpack archives"},
+        {"daemon", "Peer-to-peer and LAN repository discovery daemon"}
     };
 
     for (const auto& [name, desc] : future_cmds) {

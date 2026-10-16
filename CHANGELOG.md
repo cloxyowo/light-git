@@ -5,6 +5,31 @@ All notable changes to **light-git** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-16
+
+### Added
+- **Tagging Subsystem (`lgit tag`)**:
+  - Full lightweight and reference tagging pointing to commits (`.light-git/refs/tags/`).
+  - Commands to create, list, and delete tags (`-d`).
+  - Integration with revision resolver, `lgit show`, and `lgit log`.
+- **Workspace Stash Stack (`lgit stash`)**:
+  - Shelves dirty working directory and staging index modifications to an isolated stash commit.
+  - Reset working tree safely to clean HEAD on `stash push`.
+  - Commands: `push` (with custom messages), `list`, `pop`, `apply`, `drop`, and `clear`.
+- **Three-Way Merge Engine (`lgit merge`)**:
+  - Lowest common ancestor (merge base) detection via commit graph traversal.
+  - Automatic fast-forward detection when branch tip is ancestor.
+  - Complete 3-way file-level and line-level merge with conflict marker generation (`<<<<<<< HEAD` / `=======` / `>>>>>>>`).
+  - Automatic two-parent merge commit creation on clean merges.
+- **History Cherry-Picking (`lgit cherry-pick`)**:
+  - Selectively applies diffs from specified commits onto the current branch tip.
+  - Preserves original author attribution and commit summary.
+- **Git Interoperability Bridge (`lgit export-git`)**:
+  - Full conversion of `.light-git` history into standard Git fast-import format.
+  - Automatic initialization and streaming to `.git` repositories to push to GitHub remotes.
+- **Automated Test Coverage**:
+  - Added end-to-end integration tests for Tag, Stash, Merge, Cherry-pick, and Git Export workflows.
+
 ## [0.1.0] - 2026-10-16
 
 ### Initial Release

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(light-git VERSION 0.1.0 LANGUAGES CXX)
+project(light-git VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,6 +58,11 @@ set(LIB_SOURCES
     src/commands/cmd_config.cpp
     src/commands/cmd_gc.cpp
     src/commands/cmd_fsck.cpp
+    src/commands/cmd_tag.cpp
+    src/commands/cmd_stash.cpp
+    src/commands/cmd_merge.cpp
+    src/commands/cmd_cherry_pick.cpp
+    src/commands/cmd_export_git.cpp
     src/commands/cmd_registry.cpp
 )
 

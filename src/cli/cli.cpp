@@ -28,7 +28,7 @@ void CliDispatcher::register_command(CommandDef cmd) {
 }
 
 void CliDispatcher::print_version() const {
-    term::Terminal::print_banner("0.1.0");
+    term::Terminal::print_banner("0.2.0");
     std::cout << "built with C++17 for high-performance minimal footprint\n";
 #if defined(_WIN32)
     std::cout << "platform: Windows (MSVC)\n";
@@ -43,7 +43,7 @@ void CliDispatcher::print_version() const {
 
 void CliDispatcher::print_general_help() const {
     using namespace term;
-    Terminal::print_banner("0.1.0");
+    Terminal::print_banner("0.2.0");
 
     std::cout << Terminal::bold("USAGE:") << "\n";
     std::cout << "  lgit [--version] [--help] [--no-color] <command> [<args>]\n\n";
@@ -52,6 +52,7 @@ void CliDispatcher::print_general_help() const {
     std::vector<std::string> core_cmds = {
         "init", "status", "add", "commit", "log", "diff",
         "branch", "switch", "restore", "reset", "show", "rm", "mv",
+        "tag", "stash", "merge", "cherry-pick", "export-git",
         "check-ignore", "config", "gc", "fsck"
     };
 
@@ -71,7 +72,7 @@ void CliDispatcher::print_general_help() const {
     std::cout << "\n" << Terminal::bold("PLANNED / ROADMAP COMMANDS:") << "\n";
     std::vector<std::string> future_cmds = {
         "clone", "fetch", "pull", "push", "remote",
-        "merge", "stash", "tag", "cherry-pick", "rebase", "worktree"
+        "rebase", "worktree", "ui", "sign", "bundle", "daemon"
     };
 
     for (const auto& cname : future_cmds) {

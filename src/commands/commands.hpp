@@ -26,6 +26,11 @@ int cmd_config(const CommandContext& ctx);
 int cmd_gc(const CommandContext& ctx);
 int cmd_fsck(const CommandContext& ctx);
 int cmd_version(const CommandContext& ctx);
+int cmd_tag(const CommandContext& ctx);
+int cmd_stash(const CommandContext& ctx);
+int cmd_merge(const CommandContext& ctx);
+int cmd_cherry_pick(const CommandContext& ctx);
+int cmd_export_git(const CommandContext& ctx);
 int cmd_future_stub(const CommandContext& ctx);
 
 } // namespace commands

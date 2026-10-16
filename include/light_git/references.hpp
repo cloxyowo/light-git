@@ -29,6 +29,7 @@ public:
     // Tag operations
     std::optional<ObjectId> get_tag(const std::string& tag_name) const;
     void set_tag(const std::string& tag_name, const ObjectId& commit_id);
+    bool delete_tag(const std::string& tag_name);
     std::vector<std::string> list_tags() const;
 
     // All refs for gc & fsck

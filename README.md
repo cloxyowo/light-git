@@ -148,6 +148,11 @@ lgit switch -c feature/login
 | `lgit show` | Display commit details and unified patch diff. |
 | `lgit rm` | Remove tracked files from index and working tree (`--cached`). |
 | `lgit mv` | Move or rename tracked files and update index. |
+| `lgit tag` | Create, list, or delete tags (`-d`, `-a`, `-m`). |
+| `lgit stash` | Shelve dirty workspace modifications (`push`, `pop`, `apply`, `list`, `drop`). |
+| `lgit merge` | Three-way merge branches with conflict markers (`<<<<<<< HEAD`). |
+| `lgit cherry-pick` | Apply the changes introduced by an existing commit. |
+| `lgit export-git` | Export repository to Git fast-import format to push to GitHub. |
 | `lgit check-ignore` | Debug and inspect which `.light-gitignore` rule matches a path. |
 | `lgit config` | Read or set configuration options locally or `--global`. |
 | `lgit gc` | Clean unreachable objects via mark-and-sweep garbage collection. |
@@ -254,19 +259,33 @@ Full technical documentation is located in the `docs/` directory:
 
 ## Roadmap
 
-- [x] Content-addressed immutable storage (Blobs, Trees, Commits)
-- [x] Binary staging index with SHA-256 checksum verification
-- [x] Atomic write safety across all file operations
-- [x] Myers line diff algorithm implementation
-- [x] `.light-gitignore` pattern matching engine
-- [x] Core local commands (init, status, add, commit, log, branch, switch, restore, reset, rm, mv, show, gc, fsck)
-- [x] Native cross-platform installers & uninstallers (Windows & Unix)
-- [ ] Three-way merge engine and conflict markers (`lgit merge`)
-- [ ] Working tree stash support (`lgit stash`)
-- [ ] Tagging subsystem (`lgit tag`)
-- [ ] History editing tools (`lgit rebase`, `lgit cherry-pick`)
-- [ ] Remote network synchronization (`lgit clone`, `lgit fetch`, `lgit push`, `lgit pull`)
-- [ ] Git bridge: snapshot import/export between `.git` and `.light-git`
+### Milestone 1: Core Content-Addressed VCS Engine (Completed)
+- [x] Content-addressed immutable storage (Blobs, Trees, Commits) with SHA-256
+- [x] Binary staging index (`.light-git/index`) with checksum verification
+- [x] Atomic write safety and rollback across all operations
+- [x] Myers line diff algorithm with colored hunks
+- [x] `.light-gitignore` pattern matching engine (glob, wildcards, recursion)
+- [x] Essential repository commands (`init`, `status`, `add`, `commit`, `log`, `diff`, `branch`, `switch`, `restore`, `reset`, `rm`, `mv`, `show`, `gc`, `fsck`)
+- [x] Cross-platform automated installers & uninstallers (PowerShell & POSIX sh)
+
+### Milestone 2: Branching, Tags & Workspaces (Completed)
+- [x] Three-way merge engine with automatic conflict markers (`lgit merge`)
+- [x] Workspace stash stack (`lgit stash push`, `list`, `pop`, `apply`, `drop`, `clear`)
+- [x] Tagging subsystem (`lgit tag` create, list, delete)
+- [x] History cherry-picking (`lgit cherry-pick <commit>`)
+- [x] Git fast-import bridge (`lgit export-git`) to export repositories and push to GitHub
+
+### Milestone 3: Distributed Collaboration & Networking (Next)
+- [ ] Direct repository remote synchronization (`lgit remote`, `lgit push`, `lgit pull`, `lgit fetch`)
+- [ ] Peer-to-peer / LAN repository discovery daemon (`lgit daemon`)
+- [ ] Compressed portable archive bundles (`lgit bundle` / `.lgitpack`)
+- [ ] Multi-working tree support (`lgit worktree`)
+
+### Milestone 4: Cryptographic Security & Developer UX (Next)
+- [ ] Native Ed25519 commit and tag signing (`lgit sign`)
+- [ ] Interactive terminal rebase (`lgit rebase -i`)
+- [ ] Embedded zero-dependency local web dashboard and graph visualizer (`lgit ui`)
+- [ ] Staging patch mode (`lgit add -p`)
 
 ---
 

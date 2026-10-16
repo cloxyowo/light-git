@@ -113,6 +113,48 @@ public:
     // Build tree hierarchy from index
     ObjectId write_tree_from_index();
 
+    // Revisions
+    std::optional<ObjectId> resolve_revision(const std::string& rev) const;
+
+    // Tags
+    void create_tag(const std::string& name, const ObjectId& target = ObjectId::zero(), const std::string& message = "");
+    void delete_tag(const std::string& name);
+    std::vector<std::string> list_tags() const;
+
+    // Stash
+    struct StashEntry {
+        size_t index{0};
+        ObjectId commit_id;
+        std::string message;
+        std::string branch;
+        int64_t timestamp{0};
+    };
+    std::vector<StashEntry> list_stashes() const;
+    ObjectId stash_push(const std::string& message = "");
+    void stash_apply(size_t index = 0);
+    void stash_pop(size_t index = 0);
+    void stash_drop(size_t index = 0);
+    void stash_clear();
+
+    // Merge
+    struct MergeResult {
+        bool is_fast_forward{false};
+        bool already_up_to_date{false};
+        bool has_conflicts{false};
+        ObjectId commit_id;
+        std::vector<std::string> conflict_files;
+        std::vector<std::string> merged_files;
+        std::string message;
+    };
+    MergeResult merge(const std::string& branch_or_commit);
+
+    // Cherry-pick
+    ObjectId cherry_pick(const ObjectId& commit_id);
+
+    // Git Export Bridge
+    std::string export_git_fastimport() const;
+    void export_to_git(const std::filesystem::path& target_git_dir);
+
 private:
     Repository(std::filesystem::path work_dir, std::filesystem::path git_dir, bool bare);
 

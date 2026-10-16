@@ -134,6 +134,12 @@ void References::set_tag(const std::string& tag_name, const ObjectId& commit_id)
     fs_util::atomic_write_file(tpath, content);
 }
 
+bool References::delete_tag(const std::string& tag_name) {
+    std::filesystem::path tpath = tags_dir() / tag_name;
+    std::error_code ec;
+    return std::filesystem::remove(tpath, ec);
+}
+
 std::vector<std::string> References::list_tags() const {
     std::vector<std::string> tags;
     if (!std::filesystem::exists(tags_dir())) {
