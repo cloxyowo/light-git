@@ -95,6 +95,8 @@ public:
     std::vector<FileDiff> diff_working_vs_index();
     std::vector<FileDiff> diff_index_vs_head();
     std::vector<FileDiff> diff_commit(const ObjectId& commit_id);
+    std::vector<FileDiff> diff_commits(const ObjectId& old_commit_id, const ObjectId& new_commit_id);
+    std::vector<FileDiff> diff_working_vs_commit(const ObjectId& commit_id);
 
     // Maintenance
     struct GcResult {

@@ -45,6 +45,9 @@ ObjectId References::resolve_head() const {
         return ObjectId::zero();
     }
     std::string content = trim_ref(fs_util::read_file_string(head_file()));
+    if (content.empty()) {
+        return ObjectId::zero();
+    }
     static constexpr std::string_view prefix = "ref: refs/heads/";
     if (content.rfind(prefix, 0) == 0) {
         std::string branch = content.substr(prefix.size());
@@ -54,8 +57,8 @@ ObjectId References::resolve_head() const {
 
     try {
         return ObjectId::from_hex(content);
-    } catch (...) {
-        return ObjectId::zero();
+    } catch (const std::exception& e) {
+        throw std::runtime_error("corrupted HEAD reference in '" + head_file().string() + "': " + e.what());
     }
 }
 
@@ -75,10 +78,13 @@ std::optional<ObjectId> References::get_branch_commit(const std::string& branch_
         return std::nullopt;
     }
     std::string content = trim_ref(fs_util::read_file_string(bpath));
+    if (content.empty()) {
+        throw std::runtime_error("corrupted reference 'refs/heads/" + branch_name + "': file is empty");
+    }
     try {
         return ObjectId::from_hex(content);
-    } catch (...) {
-        return std::nullopt;
+    } catch (const std::exception& e) {
+        throw std::runtime_error("corrupted reference 'refs/heads/" + branch_name + "': " + e.what());
     }
 }
 
@@ -121,10 +127,13 @@ std::optional<ObjectId> References::get_tag(const std::string& tag_name) const {
         return std::nullopt;
     }
     std::string content = trim_ref(fs_util::read_file_string(tpath));
+    if (content.empty()) {
+        throw std::runtime_error("corrupted tag reference 'refs/tags/" + tag_name + "': file is empty");
+    }
     try {
         return ObjectId::from_hex(content);
-    } catch (...) {
-        return std::nullopt;
+    } catch (const std::exception& e) {
+        throw std::runtime_error("corrupted tag reference 'refs/tags/" + tag_name + "': " + e.what());
     }
 }
 

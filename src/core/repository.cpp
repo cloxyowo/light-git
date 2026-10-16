@@ -179,12 +179,13 @@ RepoStatus Repository::compute_status() {
     if (status.head_commit) {
         try {
             RawObject cobj = objects_->read_object(status.head_commit);
-            if (cobj.type == ObjectType::Commit) {
-                Commit commit = Commit::deserialize(cobj.data);
-                head_files = Tree::flatten_tree(*objects_, commit.tree_id);
+            if (cobj.type != ObjectType::Commit) {
+                throw std::runtime_error("HEAD object " + status.head_commit.to_short_hex() + " is not a commit");
             }
-        } catch (...) {
-            // Commit corrupted or unreadable
+            Commit commit = Commit::deserialize(cobj.data);
+            head_files = Tree::flatten_tree(*objects_, commit.tree_id);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("Failed to read HEAD commit " + status.head_commit.to_short_hex() + ": " + e.what());
         }
     }
 
@@ -737,26 +738,30 @@ std::vector<FileDiff> Repository::diff_index_vs_head() {
     return diffs;
 }
 
-std::vector<FileDiff> Repository::diff_commit(const ObjectId& commit_id) {
+std::vector<FileDiff> Repository::diff_commits(const ObjectId& old_commit_id, const ObjectId& new_commit_id) {
     std::vector<FileDiff> diffs;
-    RawObject cobj = objects_->read_object(commit_id);
-    if (cobj.type != ObjectType::Commit) return diffs;
+    std::map<std::string, TreeEntry> old_files;
+    std::map<std::string, TreeEntry> new_files;
 
-    Commit commit = Commit::deserialize(cobj.data);
-    auto cur_files = Tree::flatten_tree(*objects_, commit.tree_id);
-
-    std::map<std::string, TreeEntry> parent_files;
-    if (!commit.parents.empty()) {
-        RawObject pobj = objects_->read_object(commit.parents.front());
-        if (pobj.type == ObjectType::Commit) {
-            Commit pcommit = Commit::deserialize(pobj.data);
-            parent_files = Tree::flatten_tree(*objects_, pcommit.tree_id);
+    if (old_commit_id) {
+        RawObject oobj = objects_->read_object(old_commit_id);
+        if (oobj.type == ObjectType::Commit) {
+            Commit ocommit = Commit::deserialize(oobj.data);
+            old_files = Tree::flatten_tree(*objects_, ocommit.tree_id);
         }
     }
 
-    for (const auto& [path, te] : cur_files) {
-        auto it = parent_files.find(path);
-        if (it == parent_files.end()) {
+    if (new_commit_id) {
+        RawObject nobj = objects_->read_object(new_commit_id);
+        if (nobj.type == ObjectType::Commit) {
+            Commit ncommit = Commit::deserialize(nobj.data);
+            new_files = Tree::flatten_tree(*objects_, ncommit.tree_id);
+        }
+    }
+
+    for (const auto& [path, te] : new_files) {
+        auto it = old_files.find(path);
+        if (it == old_files.end()) {
             RawObject bobj = objects_->read_object(te.id);
             std::string new_content(bobj.data.begin(), bobj.data.end());
             FileDiff fd = DiffEngine::compute_diff("", new_content, path, path);
@@ -771,8 +776,69 @@ std::vector<FileDiff> Repository::diff_commit(const ObjectId& commit_id) {
         }
     }
 
-    for (const auto& [path, te] : parent_files) {
-        if (cur_files.find(path) == cur_files.end()) {
+    for (const auto& [path, te] : old_files) {
+        if (new_files.find(path) == new_files.end()) {
+            RawObject old_obj = objects_->read_object(te.id);
+            std::string old_content(old_obj.data.begin(), old_obj.data.end());
+            FileDiff fd = DiffEngine::compute_diff(old_content, "", path, path);
+            if (!fd.empty()) diffs.push_back(std::move(fd));
+        }
+    }
+
+    return diffs;
+}
+
+std::vector<FileDiff> Repository::diff_commit(const ObjectId& commit_id) {
+    RawObject cobj = objects_->read_object(commit_id);
+    if (cobj.type != ObjectType::Commit) return {};
+    Commit commit = Commit::deserialize(cobj.data);
+    ObjectId parent_id = commit.parents.empty() ? ObjectId::zero() : commit.parents.front();
+    return diff_commits(parent_id, commit_id);
+}
+
+std::vector<FileDiff> Repository::diff_working_vs_commit(const ObjectId& commit_id) {
+    std::vector<FileDiff> diffs;
+    if (is_bare_) return diffs;
+
+    std::map<std::string, TreeEntry> commit_files;
+    if (commit_id) {
+        RawObject cobj = objects_->read_object(commit_id);
+        if (cobj.type == ObjectType::Commit) {
+            Commit commit = Commit::deserialize(cobj.data);
+            commit_files = Tree::flatten_tree(*objects_, commit.tree_id);
+        }
+    }
+
+    std::unordered_set<std::string> on_disk_paths;
+    auto entries = fs_util::list_directory_recursive(work_dir_);
+    for (const auto& de : entries) {
+        if (de.is_directory) continue;
+        std::string rel_path = fs_util::normalize_path(de.relative_path);
+        on_disk_paths.insert(rel_path);
+
+        auto it = commit_files.find(rel_path);
+        if (it == commit_files.end()) {
+            if (!ignores_.is_ignored(rel_path, false)) {
+                std::vector<uint8_t> disk_data = fs_util::read_file_bytes(de.full_path);
+                std::string new_content(disk_data.begin(), disk_data.end());
+                FileDiff fd = DiffEngine::compute_diff("", new_content, rel_path, rel_path);
+                if (!fd.empty()) diffs.push_back(std::move(fd));
+            }
+        } else {
+            std::vector<uint8_t> disk_data = fs_util::read_file_bytes(de.full_path);
+            ObjectId disk_id = hash_bytes(disk_data.data(), disk_data.size());
+            if (disk_id != it->second.id) {
+                RawObject old_obj = objects_->read_object(it->second.id);
+                std::string old_content(old_obj.data.begin(), old_obj.data.end());
+                std::string new_content(disk_data.begin(), disk_data.end());
+                FileDiff fd = DiffEngine::compute_diff(old_content, new_content, rel_path, rel_path);
+                if (!fd.empty()) diffs.push_back(std::move(fd));
+            }
+        }
+    }
+
+    for (const auto& [path, te] : commit_files) {
+        if (on_disk_paths.find(path) == on_disk_paths.end()) {
             RawObject old_obj = objects_->read_object(te.id);
             std::string old_content(old_obj.data.begin(), old_obj.data.end());
             FileDiff fd = DiffEngine::compute_diff(old_content, "", path, path);
@@ -789,7 +855,9 @@ static void mark_reachable_tree(const ObjectStore& store, const ObjectId& tree_i
 
     try {
         RawObject obj = store.read_object(tree_id);
-        if (obj.type != ObjectType::Tree) return;
+        if (obj.type != ObjectType::Tree) {
+            throw std::runtime_error("Object " + tree_id.to_short_hex() + " is not a tree");
+        }
         Tree tree = Tree::deserialize(obj.data);
         for (const auto& entry : tree.entries()) {
             marked.insert(entry.id);
@@ -797,7 +865,11 @@ static void mark_reachable_tree(const ObjectStore& store, const ObjectId& tree_i
                 mark_reachable_tree(store, entry.id, marked);
             }
         }
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Garbage collection aborted: tree " + tree_id.to_short_hex() +
+                                 " is corrupted or unreadable: " + e.what() +
+                                 ". Run 'lgit fsck' to verify repository integrity.");
+    }
 }
 
 static void mark_reachable_commit(const ObjectStore& store, const ObjectId& commit_id, std::unordered_set<ObjectId>& marked) {
@@ -806,13 +878,19 @@ static void mark_reachable_commit(const ObjectStore& store, const ObjectId& comm
 
     try {
         RawObject obj = store.read_object(commit_id);
-        if (obj.type != ObjectType::Commit) return;
+        if (obj.type != ObjectType::Commit) {
+            throw std::runtime_error("Object " + commit_id.to_short_hex() + " is not a commit");
+        }
         Commit commit = Commit::deserialize(obj.data);
         mark_reachable_tree(store, commit.tree_id, marked);
         for (const auto& p : commit.parents) {
             mark_reachable_commit(store, p, marked);
         }
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Garbage collection aborted: commit " + commit_id.to_short_hex() +
+                                 " is corrupted or unreadable: " + e.what() +
+                                 ". Run 'lgit fsck' to verify repository integrity.");
+    }
 }
 
 Repository::GcResult Repository::garbage_collect() {
@@ -833,10 +911,15 @@ Repository::GcResult Repository::garbage_collect() {
         reachable.insert(ie.id);
     }
 
+    // 3. Mark from stashes
+    for (const auto& s : list_stashes()) {
+        mark_reachable_commit(*objects_, s.commit_id, reachable);
+    }
+
     res.kept_objects = 0;
     res.removed_objects = 0;
 
-    // 3. Sweep unreachable objects
+    // 4. Sweep unreachable objects
     for (const auto& id : all_objects) {
         if (reachable.find(id) != reachable.end()) {
             res.kept_objects++;
@@ -894,6 +977,42 @@ std::vector<Repository::FsckIssue> Repository::verify_integrity() {
 
 std::optional<ObjectId> Repository::resolve_revision(const std::string& rev) const {
     if (rev.empty()) return std::nullopt;
+
+    // Handle rev~N or rev^N syntax
+    size_t tilde_pos = rev.find_first_of("~^");
+    if (tilde_pos != std::string::npos) {
+        std::string base_str = rev.substr(0, tilde_pos);
+        if (base_str.empty()) base_str = "HEAD";
+        std::string count_str = rev.substr(tilde_pos + 1);
+        unsigned long steps = 1;
+        if (!count_str.empty()) {
+            try {
+                size_t parsed_len = 0;
+                steps = std::stoul(count_str, &parsed_len);
+                if (parsed_len != count_str.size()) {
+                    return std::nullopt;
+                }
+            } catch (...) {
+                return std::nullopt;
+            }
+        }
+        auto base_id = resolve_revision(base_str);
+        if (!base_id) return std::nullopt;
+        ObjectId cur = *base_id;
+        for (unsigned long i = 0; i < steps && cur; ++i) {
+            try {
+                RawObject robj = objects_->read_object(cur);
+                if (robj.type != ObjectType::Commit) return std::nullopt;
+                Commit c = Commit::deserialize(robj.data);
+                if (c.parents.empty()) return std::nullopt;
+                cur = c.parents.front();
+            } catch (...) {
+                return std::nullopt;
+            }
+        }
+        return cur;
+    }
+
     if (rev == "HEAD") {
         ObjectId head_id = refs_->resolve_head();
         if (head_id) return head_id;
@@ -963,11 +1082,11 @@ std::vector<Repository::StashEntry> Repository::list_stashes() const {
         if (p1 != std::string::npos && p2 != std::string::npos && p3 != std::string::npos) {
             try {
                 StashEntry se;
-                se.index = idx++;
                 se.commit_id = ObjectId::from_hex(line.substr(0, p1));
                 se.timestamp = std::stoll(line.substr(p1 + 1, p2 - p1 - 1));
                 se.branch = line.substr(p2 + 1, p3 - p2 - 1);
                 se.message = line.substr(p3 + 1);
+                se.index = idx++;
                 result.push_back(std::move(se));
             } catch (...) {}
         }

@@ -345,6 +345,56 @@ TEST(Integration_CherryPickAndExportGit) {
     ASSERT_TRUE(fastimport.find("Security patch applied") != std::string::npos);
 }
 
+TEST(Integration_RevisionTraversalAndGcStash) {
+    Sandbox sb("rev_gc_stash");
+    Repository repo = Repository::init(sb.path, false, "main");
+    repo.config().set_local("user.name", "Tester");
+    repo.config().set_local("user.email", "tester@lightgit.local");
+
+    sb.write_file("file.txt", "v1\n");
+    repo.stage_all();
+    ObjectId c1 = repo.create_commit("commit 1");
+
+    sb.write_file("file.txt", "v2\n");
+    repo.stage_all();
+    ObjectId c2 = repo.create_commit("commit 2");
+
+    // 1. Revision resolution: HEAD~1, HEAD~, HEAD^
+    auto r_tilde1 = repo.resolve_revision("HEAD~1");
+    auto r_tilde = repo.resolve_revision("HEAD~");
+    auto r_caret = repo.resolve_revision("HEAD^");
+    auto r_head = repo.resolve_revision("HEAD");
+
+    ASSERT_TRUE(r_head);
+    ASSERT_EQ(*r_head, c2);
+    ASSERT_TRUE(r_tilde1);
+    ASSERT_EQ(*r_tilde1, c1);
+    ASSERT_TRUE(r_tilde);
+    ASSERT_EQ(*r_tilde, c1);
+    ASSERT_TRUE(r_caret);
+    ASSERT_EQ(*r_caret, c1);
+
+    // 2. Commit diffing
+    auto diffs = repo.diff_commits(c1, c2);
+    ASSERT_EQ(diffs.size(), 1);
+    ASSERT_EQ(diffs[0].new_path, "file.txt");
+
+    // 3. Stash changes and ensure GC does NOT purge stash objects
+    sb.write_file("file.txt", "v3 stashed changes\n");
+    ObjectId stash_cid = repo.stash_push("WIP on file");
+    ASSERT_TRUE(stash_cid);
+
+    // Run garbage collection
+    auto gc_res = repo.garbage_collect();
+    ASSERT_TRUE(gc_res.kept_objects > 0);
+
+    // Verify stash still exists and can be popped without missing object error
+    auto stashes = repo.list_stashes();
+    ASSERT_EQ(stashes.size(), 1);
+    repo.stash_pop(0);
+    ASSERT_EQ(sb.read_file("file.txt"), "v3 stashed changes\n");
+}
+
 int main() {
     return test_framework::run_all_tests();
 }

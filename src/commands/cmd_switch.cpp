@@ -11,7 +11,20 @@ int cmd_switch(const CommandContext& ctx) {
 
     Repository repo = Repository::open(".");
 
+    bool create_flag = ctx.has_flag("c") || ctx.has_flag("create");
     std::string new_branch = ctx.get_option("c", "");
+    if (new_branch.empty()) {
+        new_branch = ctx.get_option("create", "");
+    }
+    if (new_branch.empty() && create_flag) {
+        if (!ctx.args.empty()) {
+            new_branch = ctx.args.front();
+        } else {
+            Terminal::print_error("Missing branch name for -c / --create.");
+            return 1;
+        }
+    }
+
     if (!new_branch.empty()) {
         repo.switch_branch(new_branch, true);
         std::cout << "Switched to a new branch '" << Terminal::bold_violet(new_branch) << "'\n";

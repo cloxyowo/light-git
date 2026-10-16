@@ -49,7 +49,9 @@ Tree Tree::deserialize(const std::vector<uint8_t>& data) {
         while (space_pos < data.size() && data[space_pos] != ' ') {
             space_pos++;
         }
-        if (space_pos >= data.size()) break;
+        if (space_pos >= data.size()) {
+            throw std::runtime_error("Malformed tree object: missing space separator in entry");
+        }
 
         std::string mode_str(reinterpret_cast<const char*>(&data[i]), space_pos - i);
         uint32_t mode = 0;
@@ -64,7 +66,9 @@ Tree Tree::deserialize(const std::vector<uint8_t>& data) {
         while (null_pos < data.size() && data[null_pos] != '\0') {
             null_pos++;
         }
-        if (null_pos >= data.size()) break;
+        if (null_pos >= data.size()) {
+            throw std::runtime_error("Malformed tree object: missing null terminator for entry name");
+        }
 
         std::string name(reinterpret_cast<const char*>(&data[space_pos + 1]), null_pos - (space_pos + 1));
 

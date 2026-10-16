@@ -15,7 +15,7 @@ int cmd_status(const CommandContext& ctx) {
     RepoStatus status = repo.compute_status();
 
     // Header banner
-    Terminal::print_banner("0.1.0");
+    Terminal::print_banner(std::string(LIGHT_GIT_VERSION));
 
     // Branch line
     std::string branch_display = status.is_detached ?

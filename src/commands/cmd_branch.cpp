@@ -11,13 +11,27 @@ int cmd_branch(const CommandContext& ctx) {
 
     Repository repo = Repository::open(".");
 
+    bool is_delete = ctx.has_flag("d") || ctx.has_flag("D") || ctx.has_flag("delete");
+    bool force_delete = ctx.has_flag("D");
     std::string del_branch = ctx.get_option("d", "");
     if (del_branch.empty()) {
         del_branch = ctx.get_option("D", "");
+        if (!del_branch.empty()) force_delete = true;
+    }
+    if (del_branch.empty()) {
+        del_branch = ctx.get_option("delete", "");
+    }
+    if (del_branch.empty() && is_delete) {
+        if (!ctx.args.empty()) {
+            del_branch = ctx.args.front();
+        } else {
+            Terminal::print_error("Missing branch name to delete.");
+            return 1;
+        }
     }
 
     if (!del_branch.empty()) {
-        repo.delete_branch(del_branch, true);
+        repo.delete_branch(del_branch, force_delete);
         std::cout << "Deleted branch " << Terminal::bold_violet(del_branch) << ".\n";
         return 0;
     }

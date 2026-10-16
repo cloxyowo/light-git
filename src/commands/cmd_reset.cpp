@@ -22,31 +22,12 @@ int cmd_reset(const CommandContext& ctx) {
 
     if (!ctx.args.empty()) {
         std::string ref_str = ctx.args.front();
-        if (ref_str == "HEAD") {
-            target = repo.refs().resolve_head();
-        } else if (ref_str.rfind("HEAD~", 0) == 0) {
-            int steps = std::stoi(ref_str.substr(5));
-            ObjectId cur = repo.refs().resolve_head();
-            for (int i = 0; i < steps && cur; ++i) {
-                RawObject robj = repo.objects().read_object(cur);
-                Commit c = Commit::deserialize(robj.data);
-                if (c.parents.empty()) break;
-                cur = c.parents.front();
-            }
-            target = cur;
+        auto opt = repo.resolve_revision(ref_str);
+        if (opt) {
+            target = *opt;
         } else {
-            auto opt = repo.objects().resolve_prefix(ref_str);
-            if (opt) {
-                target = *opt;
-            } else {
-                auto bopt = repo.refs().get_branch_commit(ref_str);
-                if (bopt) {
-                    target = *bopt;
-                } else {
-                    Terminal::print_error("Failed to resolve commit '" + ref_str + "'");
-                    return 1;
-                }
-            }
+            Terminal::print_error("Failed to resolve revision '" + ref_str + "'");
+            return 1;
         }
     }
 

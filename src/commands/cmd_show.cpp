@@ -17,19 +17,12 @@ int cmd_show(const CommandContext& ctx) {
     ObjectId target = repo.refs().resolve_head();
     if (!ctx.args.empty()) {
         std::string ref_str = ctx.args.front();
-        if (ref_str != "HEAD") {
-            auto opt = repo.objects().resolve_prefix(ref_str);
-            if (opt) {
-                target = *opt;
-            } else {
-                auto bopt = repo.refs().get_branch_commit(ref_str);
-                if (bopt) {
-                    target = *bopt;
-                } else {
-                    Terminal::print_error("Failed to resolve commit '" + ref_str + "'");
-                    return 1;
-                }
-            }
+        auto opt = repo.resolve_revision(ref_str);
+        if (opt) {
+            target = *opt;
+        } else {
+            Terminal::print_error("Failed to resolve revision '" + ref_str + "'");
+            return 1;
         }
     }
 

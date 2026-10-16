@@ -1,5 +1,6 @@
 #include "light_git/cli.hpp"
 #include "light_git/terminal.hpp"
+#include "light_git/types.hpp"
 #include "commands/commands.hpp"
 #include <iostream>
 #include <iomanip>
@@ -28,7 +29,7 @@ void CliDispatcher::register_command(CommandDef cmd) {
 }
 
 void CliDispatcher::print_version() const {
-    term::Terminal::print_banner("0.2.0");
+    term::Terminal::print_banner(std::string(LIGHT_GIT_VERSION));
     std::cout << "built with C++17 for high-performance minimal footprint\n";
 #if defined(_WIN32)
     std::cout << "platform: Windows (MSVC)\n";
@@ -43,7 +44,7 @@ void CliDispatcher::print_version() const {
 
 void CliDispatcher::print_general_help() const {
     using namespace term;
-    Terminal::print_banner("0.2.0");
+    Terminal::print_banner(std::string(LIGHT_GIT_VERSION));
 
     std::cout << Terminal::bold("USAGE:") << "\n";
     std::cout << "  lgit [--version] [--help] [--no-color] <command> [<args>]\n\n";
@@ -196,7 +197,7 @@ int CliDispatcher::dispatch(int argc, const char* const argv[]) {
             }
         } else if (arg.size() > 1 && arg[0] == '-') {
             // Short options
-            if (arg == "-m" || arg == "-c" || arg == "-d" || arg == "-D") {
+            if (arg == "-m" || arg == "-c" || arg == "-d" || arg == "-D" || arg == "-n" || arg == "-s") {
                 std::string key = arg.substr(1);
                 if (arg_idx + 1 < argc && argv[arg_idx + 1][0] != '-') {
                     ctx.options[key] = argv[arg_idx + 1];
@@ -205,7 +206,7 @@ int CliDispatcher::dispatch(int argc, const char* const argv[]) {
                     ctx.flags.push_back(key);
                 }
             } else {
-                // Short flags like -A, -s
+                // Short flags like -A
                 for (size_t i = 1; i < arg.size(); ++i) {
                     ctx.flags.push_back(std::string(1, arg[i]));
                 }

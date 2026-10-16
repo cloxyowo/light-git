@@ -7,11 +7,22 @@ namespace light_git {
 namespace commands {
 
 static size_t parse_stash_index(const std::string& arg) {
+    std::string num_str = arg;
     if (arg.rfind("stash@{", 0) == 0 && arg.back() == '}') {
-        std::string num_str = arg.substr(7, arg.size() - 8);
-        return std::stoul(num_str);
+        num_str = arg.substr(7, arg.size() - 8);
     }
-    return std::stoul(arg);
+    try {
+        size_t idx = 0;
+        unsigned long val = std::stoul(num_str, &idx);
+        if (idx != num_str.size()) {
+            throw std::runtime_error("Invalid stash reference: '" + arg + "'");
+        }
+        return static_cast<size_t>(val);
+    } catch (const std::runtime_error&) {
+        throw;
+    } catch (...) {
+        throw std::runtime_error("Invalid stash reference: '" + arg + "'");
+    }
 }
 
 int cmd_stash(const CommandContext& ctx) {

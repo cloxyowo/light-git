@@ -24,8 +24,16 @@ int cmd_log(const CommandContext& ctx) {
     std::string n_opt = ctx.get_option("n", "");
     if (!n_opt.empty()) {
         try {
-            max_count = std::stoi(n_opt);
-        } catch (...) {}
+            size_t idx = 0;
+            max_count = std::stoi(n_opt, &idx);
+            if (idx != n_opt.size() || max_count < 0) {
+                Terminal::print_error("Invalid number for -n: '" + n_opt + "'");
+                return 1;
+            }
+        } catch (...) {
+            Terminal::print_error("Invalid number for -n: '" + n_opt + "'");
+            return 1;
+        }
     }
 
     int count = 0;

@@ -7,6 +7,7 @@
 #include "light_git/commit.hpp"
 #include "light_git/index.hpp"
 #include "light_git/object_store.hpp"
+#include "light_git/references.hpp"
 #include "light_git/filesystem.hpp"
 #include <filesystem>
 #include <fstream>
@@ -186,6 +187,47 @@ TEST(Index_SerializationAndIntegrity) {
     ASSERT_THROWS(corrupt_idx.load_from_file(idx_path));
 
     std::filesystem::remove(idx_path);
+}
+
+TEST(Objects_TreeDeserializationErrors) {
+    // 1. Missing space separator
+    std::vector<uint8_t> bad1 = {'1', '0', '0', '6', '4', '4'};
+    ASSERT_THROWS(Tree::deserialize(bad1));
+
+    // 2. Missing null terminator
+    std::vector<uint8_t> bad2 = {'1', '0', '0', '6', '4', '4', ' ', 'f', 'i', 'l', 'e'};
+    ASSERT_THROWS(Tree::deserialize(bad2));
+
+    // 3. Truncated hash bytes (< 32 bytes)
+    std::vector<uint8_t> bad3 = {'1', '0', '0', '6', '4', '4', ' ', 'f', 'i', 'l', 'e', '\0', 0x01, 0x02};
+    ASSERT_THROWS(Tree::deserialize(bad3));
+}
+
+TEST(References_CorruptedRefError) {
+    std::filesystem::path dummy_git = "temp_test_git";
+    std::filesystem::create_directories(dummy_git / "refs" / "heads");
+    std::filesystem::create_directories(dummy_git / "refs" / "tags");
+
+    References refs(dummy_git);
+
+    // 1. Empty branch file should throw corruption error
+    fs_util::write_file_string(dummy_git / "refs" / "heads" / "bad_branch", "");
+    ASSERT_THROWS(refs.get_branch_commit("bad_branch"));
+
+    // 2. Corrupted hex in branch file should throw
+    fs_util::write_file_string(dummy_git / "refs" / "heads" / "bad_hex", "not_a_valid_hex_hash\n");
+    ASSERT_THROWS(refs.get_branch_commit("bad_hex"));
+
+    // 3. Empty tag file should throw
+    fs_util::write_file_string(dummy_git / "refs" / "tags" / "bad_tag", "");
+    ASSERT_THROWS(refs.get_tag("bad_tag"));
+
+    // 4. Corrupted detached HEAD should throw
+    fs_util::write_file_string(dummy_git / "HEAD", "this_is_not_hex\n");
+    ASSERT_THROWS(refs.resolve_head());
+
+    std::error_code ec;
+    std::filesystem::remove_all(dummy_git, ec);
 }
 
 int main() {
