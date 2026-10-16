@@ -16,7 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for `--force` flag on `lgit push`.
   - Automatic fetch and 3-way merge integration on `lgit pull`.
 - **Repository Cloning (`lgit clone`)**:
-  - Clone repositories from filesystem directories or `.lgitpack` binary archives.
+  - Clone repositories from filesystem directories, `.lgitpack` binary archives, or remote Git URLs (e.g. GitHub/GitLab).
+  - Transparent Git bridge automatically imports tracked files, sets `origin` remote, and initializes `.light-git`.
+  - Added shallow clone support with `--depth <n>`.
+  - Automatic fallback to `.gitignore` when `.light-gitignore` is not present, with layered rule merging.
   - Configurable branch selection with `-b <branch>`.
   - Automatic working tree materialization, staging index initialization, and `origin` remote setup.
 - **Portable Binary Bundles (`lgit bundle` / `.lgitpack`)**:

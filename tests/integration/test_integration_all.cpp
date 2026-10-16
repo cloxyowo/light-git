@@ -530,6 +530,54 @@ TEST(Integration_WorktreeWorkflow) {
     std::filesystem::remove_all(wt_path, ec);
 }
 
+TEST(Integration_CloneGitRepository) {
+    std::string check_cmd =
+#if defined(_WIN32)
+        "git --version > nul 2>&1";
+#else
+        "git --version > /dev/null 2>&1";
+#endif
+    if (std::system(check_cmd.c_str()) != 0) {
+        // Git is not available in environment; skip test
+        return;
+    }
+
+    Sandbox sb("clone_git");
+    std::filesystem::path git_source = sb.path / "source_git";
+    std::filesystem::path lgit_target = sb.path / "target_lgit";
+    std::filesystem::create_directories(git_source);
+
+    // Initialize source git repository
+    std::string init_cmd = "git -C \"" + git_source.string() + "\" init -b main";
+    (void)std::system(init_cmd.c_str());
+
+    std::string cfg1 = "git -C \"" + git_source.string() + "\" config user.name \"Tester\"";
+    std::string cfg2 = "git -C \"" + git_source.string() + "\" config user.email \"tester@test.com\"";
+    (void)std::system(cfg1.c_str());
+    (void)std::system(cfg2.c_str());
+
+    fs_util::write_file_string(git_source / "hello.txt", "Hello from Git repo\n");
+    std::string add_cmd = "git -C \"" + git_source.string() + "\" add hello.txt";
+    std::string commit_cmd = "git -C \"" + git_source.string() + "\" commit -m \"Initial git commit\"";
+    (void)std::system(add_cmd.c_str());
+    (void)std::system(commit_cmd.c_str());
+
+    // Clone Git repository using light-git
+    Repository repo = Repository::clone_repository(git_source.string(), lgit_target);
+
+    ASSERT_TRUE(std::filesystem::exists(lgit_target / ".light-git"));
+    ASSERT_TRUE(std::filesystem::exists(lgit_target / "hello.txt"));
+    ASSERT_TRUE(fs_util::read_file_string(lgit_target / "hello.txt").find("Hello from Git repo") != std::string::npos);
+
+    ObjectId head_id = repo.refs().resolve_head();
+    ASSERT_TRUE(head_id);
+
+    auto remotes = repo.list_remotes();
+    ASSERT_EQ(remotes.size(), 1);
+    ASSERT_EQ(remotes[0].name, "origin");
+}
+
 int main() {
     return test_framework::run_all_tests();
 }
+

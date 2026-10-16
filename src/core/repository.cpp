@@ -143,6 +143,10 @@ Repository Repository::open(const std::filesystem::path& start_path) {
 void Repository::load_ignores() {
     ignores_.clear();
     if (!is_bare_) {
+        std::filesystem::path git_path = work_dir_ / ".gitignore";
+        if (std::filesystem::exists(git_path)) {
+            ignores_.load_from_file(git_path);
+        }
         std::filesystem::path ig_path = work_dir_ / ".light-gitignore";
         if (std::filesystem::exists(ig_path)) {
             ignores_.load_from_file(ig_path);
@@ -1951,7 +1955,22 @@ Repository::PullResult Repository::pull_remote(const std::string& remote_name, c
     return res;
 }
 
-Repository Repository::clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch) {
+namespace {
+bool is_remote_git_url(const std::string& str) {
+    return str.rfind("http://", 0) == 0 ||
+           str.rfind("https://", 0) == 0 ||
+           str.rfind("git@", 0) == 0 ||
+           str.rfind("ssh://", 0) == 0 ||
+           str.rfind("git://", 0) == 0;
+}
+
+bool is_local_git_repo(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::exists(path / ".git", ec) && !std::filesystem::exists(path / ".light-git", ec);
+}
+}
+
+Repository Repository::clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch, int depth) {
     if (std::filesystem::exists(target_dir) && !std::filesystem::is_empty(target_dir)) {
         throw std::runtime_error("Destination path '" + target_dir.string() + "' already exists and is not an empty directory");
     }
@@ -1972,6 +1991,71 @@ Repository Repository::clone_repository(const std::string& source_url_or_path, c
             repo.reset(*cid, ResetMode::Hard);
         }
         return repo;
+    }
+
+    if (is_remote_git_url(source_url_or_path) || is_local_git_repo(src_path)) {
+        std::string check_cmd =
+#if defined(_WIN32)
+            "git --version > nul 2>&1";
+#else
+            "git --version > /dev/null 2>&1";
+#endif
+        if (std::system(check_cmd.c_str()) != 0) {
+            throw std::runtime_error(
+                "Cloning remote Git URL '" + source_url_or_path + "' requires 'git' executable on PATH.\n"
+                "To transfer light-git repositories without Git, use portable bundles: 'lgit bundle create <file.lgitpack>'");
+        }
+
+        std::string clone_cmd = "git clone ";
+        if (!branch.empty()) {
+            clone_cmd += "-b \"" + branch + "\" ";
+        }
+        if (depth > 0) {
+            clone_cmd += "--depth " + std::to_string(depth) + " ";
+        }
+        clone_cmd += "\"" + source_url_or_path + "\" \"" + target_dir.string() + "\"";
+
+        int r = std::system(clone_cmd.c_str());
+        if (r != 0) {
+            throw std::runtime_error("git clone failed for '" + source_url_or_path + "'");
+        }
+
+        std::string target_branch = branch;
+        if (target_branch.empty()) {
+            std::filesystem::path git_head = target_dir / ".git" / "HEAD";
+            if (std::filesystem::exists(git_head)) {
+                std::string hcontent = fs_util::read_file_string(git_head);
+                if (hcontent.rfind("ref: refs/heads/", 0) == 0) {
+                    target_branch = hcontent.substr(16);
+                    while (!target_branch.empty() && (target_branch.back() == '\r' || target_branch.back() == '\n' || target_branch.back() == ' ')) {
+                        target_branch.pop_back();
+                    }
+                }
+            }
+        }
+        if (target_branch.empty()) target_branch = "main";
+
+        Repository repo = Repository::init(target_dir, false, target_branch);
+        repo.add_remote("origin", source_url_or_path);
+
+        if (!repo.config_->get("user.name").has_value()) {
+            repo.config_->set_local("user.name", "User");
+        }
+        if (!repo.config_->get("user.email").has_value()) {
+            repo.config_->set_local("user.email", "user@example.com");
+        }
+
+        repo.stage_all();
+
+        if (repo.index_->size() > 0) {
+            repo.create_commit("Initial import from " + source_url_or_path, false);
+        }
+
+        return repo;
+    }
+
+    if (!std::filesystem::exists(src_path / ".light-git") && !std::filesystem::exists(src_path / "HEAD")) {
+        throw std::runtime_error("Source '" + source_url_or_path + "' is not a light-git repository, .lgitpack bundle, or Git repository");
     }
 
     Repository src_repo = Repository::open(source_url_or_path);

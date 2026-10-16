@@ -252,7 +252,7 @@ void register_all_commands(CliDispatcher& d) {
     d.register_command({
         "clone",
         "Clone a repository or bundle into a new directory",
-        "lgit clone <source> [<directory>] [-b <branch>]",
+        "lgit clone <source> [<directory>] [-b <branch>] [--depth <n>]",
         cmd_clone,
         true
     });

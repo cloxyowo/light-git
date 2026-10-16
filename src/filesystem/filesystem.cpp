@@ -78,22 +78,8 @@ std::vector<uint8_t> read_file_bytes(const fs::path& path) {
 }
 
 std::string read_file_string(const fs::path& path) {
-    std::ifstream file(path, std::ios::in | std::ios::ate);
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open file for reading: " + path.string());
-    }
-    auto size = file.tellg();
-    if (size < 0) {
-        throw std::runtime_error("Could not determine size of file: " + path.string());
-    }
-    std::string buffer(static_cast<size_t>(size), '\0');
-    file.seekg(0, std::ios::beg);
-    if (size > 0) {
-        if (!file.read(&buffer[0], size)) {
-            throw std::runtime_error("Failed to read file contents: " + path.string());
-        }
-    }
-    return buffer;
+    auto bytes = read_file_bytes(path);
+    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 
 void write_file_bytes(const fs::path& path, const void* data, size_t size) {

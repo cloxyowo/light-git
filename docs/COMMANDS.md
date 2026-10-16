@@ -396,13 +396,14 @@ lgit pull <remote> <branch>               # Pull specific branch from remote
 
 ### `lgit clone`
 
-Clone a repository from a local directory or portable `.lgitpack` bundle file into a new directory.
+Clone a repository from a local directory, portable `.lgitpack` bundle file, or remote Git URL into a new directory. When cloning a remote Git URL or local Git repository, light-git automatically bridges the clone via `git`, imports tracked files, respects existing `.gitignore` files, and initializes a ready-to-use `.light-git` repository.
 
 **Usage:**
 ```bash
 lgit clone <source>                       # Clone into directory named after source
 lgit clone <source> <directory>           # Clone into target directory
 lgit clone <source> <directory> -b <branch> # Clone and checkout specific branch
+lgit clone <source> --depth 1             # Shallow clone for fast retrieval
 ```
 
 ---

@@ -206,7 +206,7 @@ public:
     PullResult pull_remote(const std::string& remote_name = "origin", const std::string& branch_name = "");
 
     // Clone
-    static Repository clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch = "");
+    static Repository clone_repository(const std::string& source_url_or_path, const std::filesystem::path& target_dir, const std::string& branch = "", int depth = 0);
 
     // Bundles (.lgitpack)
     struct BundleInfo {
