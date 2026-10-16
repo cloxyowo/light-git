@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+        type: string
 
 jobs:
   build-release:
@@ -87,12 +93,22 @@ jobs:
     name: Publish Release Assets
     needs: build-release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Determine tag name
+      id: vars
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Download all built artifacts
       uses: actions/download-artifact@v4
@@ -109,5 +125,6 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ steps.vars.outputs.tag }}
         files: release_assets/*
         generate_release_notes: true
