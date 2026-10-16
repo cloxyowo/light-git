@@ -8,55 +8,80 @@ on:
 
 jobs:
   build-release:
-    name: Build (${{ matrix.os }} - ${{ matrix.arch }})
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            arch: x64
-            artifact_name: lgit.exe
-            output_name: lgit.exe
+            artifact_name: lgit-windows-x64
           - os: ubuntu-latest
-            arch: x64
             artifact_name: lgit-linux-x64
-            output_name: lgit
-          - os: macos-13
-            arch: x64
-            artifact_name: lgit-macos-x64
-            output_name: lgit
-          - os: macos-14
-            arch: arm64
-            artifact_name: lgit-macos-arm64
-            output_name: lgit
+          - os: macos-latest
+            artifact_name: lgit-macos
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Configure CMake
-      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+        else
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        fi
 
     - name: Build
       run: cmake --build build --config Release
 
-    - name: Prepare Artifact (Windows)
+    - name: Prepare Artifacts (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         Copy-Item build/Release/lgit.exe ./lgit.exe
 
-    - name: Prepare Artifact (Unix)
-      if: runner.os != 'Windows'
+    - name: Prepare Artifacts (Linux)
+      if: runner.os == 'Linux'
       run: |
-        cp build/lgit ./${{ matrix.artifact_name }}
-        chmod +x ./${{ matrix.artifact_name }}
+        cp build/lgit ./lgit-linux-x64
+        chmod +x ./lgit-linux-x64
 
-    - name: Upload Artifact
+    - name: Prepare Artifacts (macOS Universal & Thin)
+      if: runner.os == 'macOS'
+      run: |
+        cp build/lgit ./lgit-macos
+        cp build/lgit ./lgit-macos-universal
+        lipo -thin arm64 build/lgit -output ./lgit-macos-arm64
+        lipo -thin x86_64 build/lgit -output ./lgit-macos-x64
+        chmod +x ./lgit-macos*
+        file ./lgit-macos*
+
+    - name: Upload Windows Artifact
+      if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
-        path: ${{ matrix.artifact_name }}
+        path: lgit.exe
+
+    - name: Upload Linux Artifact
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: lgit-linux-x64
+
+    - name: Upload macOS Artifacts
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: |
+          lgit-macos
+          lgit-macos-universal
+          lgit-macos-arm64
+          lgit-macos-x64
 
   publish-release:
     name: Publish Release Assets
@@ -79,6 +104,7 @@ jobs:
       run: |
         cp scripts/install.ps1 release_assets/
         cp scripts/install.sh release_assets/
+        ls -la release_assets/
 
     - name: Release
       uses: softprops/action-gh-release@v2
