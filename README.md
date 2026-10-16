@@ -11,6 +11,12 @@
 
 # light-git (`lgit`)
 
+[![CI](https://github.com/cloxyowo/light-git/actions/workflows/ci.yml/badge.svg)](https://github.com/cloxyowo/light-git/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/cloxyowo/light-git?color=8b5cf6)](https://github.com/cloxyowo/light-git/releases)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-7c3aed.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
+[![Binary Size](https://img.shields.io/badge/Binary-~380_KB-10b981.svg)](docs/BENCHMARKS.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > Ultra-lightweight, high-performance, aesthetically pleasing version control system written entirely in pure **C++17**.
 
 ---
